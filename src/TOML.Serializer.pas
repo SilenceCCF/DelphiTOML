@@ -22,7 +22,7 @@ unit TOML.Serializer;
 interface
 
 uses
-  SysUtils, Classes, TOML.Types, Generics.Collections;
+  SysUtils, Classes, Math, TOML.Types, Generics.Collections;
 
   {$IF CompilerVersion < 20.0}
 
@@ -42,7 +42,7 @@ type
     FStringBuilder: TStringBuilder;  // StringBuilder for efficient string building
     FIndentLevel: Integer;           // Current indentation level
     FCurrentPath: TStringList;       // Tracks current table path for proper nesting
-
+    FFormatSettings: TFormatSettings; // 1. 增加格式设置字段
     { Writes indentation at current level
       Used to maintain consistent formatting }
     procedure WriteIndent;
@@ -86,7 +86,7 @@ type
     { Checks if a key needs to be quoted
       @param AKey The key to check
       @returns True if key needs quoting, False otherwise }
-    function SplitDottedKey(const CompositeKey: string): TArray<string>;
+    function BuildTablePath(const NewKey: string): string;
     function NeedsQuoting(const AKey: string): Boolean;
   public
     { Creates a new TOML serializer instance }
@@ -171,6 +171,17 @@ begin
   FCurrentPath := TStringList.Create;
   FCurrentPath.Delimiter := '.';      // Set delimiter for path joining
   FCurrentPath.StrictDelimiter := True; // Use strict delimiter handling
+  // 2. 初始化为不变量格式设置（确保点号作为小数点，冒号作为时间分隔符）
+  {$IF CompilerVersion >= 22.0} // XE 及以上版本
+  FFormatSettings := TFormatSettings.Invariant;
+  {$ELSE}
+  // 兼容旧版本 Delphi (D2009/D2010)
+  GetLocaleFormatSettings(LOCALE_USER_DEFAULT, FFormatSettings);
+  FFormatSettings.DecimalSeparator := '.';
+  FFormatSettings.ThousandSeparator := #0;
+  FFormatSettings.DateSeparator := '-';
+  FFormatSettings.TimeSeparator := ':';
+  {$IFEND}
 end;
 
 destructor TTOMLSerializer.Destroy;
@@ -198,60 +209,55 @@ begin
   FStringBuilder.AppendLine;
 end;
 
-function TTOMLSerializer.SplitDottedKey(const CompositeKey: string): TArray<string>;
+// Build a complete table-header path string: FCurrentPath segments + NewKey.
+// Each segment is independently checked with NeedsQuoting; segments containing
+// dots or special characters are wrapped in "..." with proper escaping.
+// Result is ready to be placed inside [ ] or [[ ]].
+function TTOMLSerializer.BuildTablePath(const NewKey: string): string;
 var
-  Parts: TList<string>;
-  CurrentPart: string;
+  SB: TStringBuilder;
   i: Integer;
-  InQuotes: Boolean;
-  Ch: Char;
-begin
-  Parts := TList<string>.Create;
-  try
-    CurrentPart := '';
-    InQuotes := False;
 
-    i := 1;
-    while i <= Length(CompositeKey) do
+  procedure AppendSeg(const S: string);
+  var
+    j: Integer;
+  begin
+    if NeedsQuoting(S) then
     begin
-      Ch := CompositeKey[i];
-
-      if Ch = '"' then
-      begin
-        // Toggle the quotes. Key point: Do not add the quotes themselves.
-        InQuotes := not InQuotes;
-        Inc(i);
-        Continue;
-      end;
-
-      if (Ch = '.') and (not InQuotes) then
-      begin
-        // Only the period outside the quotation marks is a separator.
-        if CurrentPart <> '' then
-        begin
-          Parts.Add(CurrentPart);
-          CurrentPart := '';
+      SB.Append('"');
+      for j := 1 to Length(S) do
+        case S[j] of
+          #8:  SB.Append('\b');
+          #9:  SB.Append('\t');
+          #10: SB.Append('\n');
+          #13: SB.Append('\r');
+          '"': SB.Append('\"');
+          '\': SB.Append('\\');
+        else
+          if S[j] < #32 then
+            SB.AppendFormat('\u%.4x', [Ord(S[j])])
+          else
+            SB.Append(S[j]);
         end;
-      end
-      else
-      begin
-        // Ordinary characters or dots within quotation marks
-        CurrentPart := CurrentPart + Ch;
-      end;
+      SB.Append('"');
+    end
+    else
+      SB.Append(S);
+  end;
 
-      Inc(i);
+begin
+  SB := TStringBuilder.Create;
+  try
+    for i := 0 to FCurrentPath.Count - 1 do
+    begin
+      if i > 0 then SB.Append('.');
+      AppendSeg(FCurrentPath[i]);
     end;
-
-    // Add the last part
-    if CurrentPart <> '' then
-      Parts.Add(CurrentPart);
-
-    // Convert to array
-    SetLength(Result, Parts.Count);
-    for i := 0 to Parts.Count - 1 do
-      Result[i] := Parts[i];
+    if FCurrentPath.Count > 0 then SB.Append('.');
+    AppendSeg(NewKey);
+    Result := SB.ToString;
   finally
-    Parts.Free;
+    SB.Free;
   end;
 end;
 
@@ -280,41 +286,13 @@ end;
 
 
 procedure TTOMLSerializer.WriteKey(const AKey: string);
-var
-  KeyParts: TArray<string>;
-  i: Integer;
-  Part: string;
 begin
-  // Check if the whole key needs quoting
+  // AKey is always a single key segment here.
+  // Any segment containing dots or special chars (e.g. "tt.com") must be quoted.
   if NeedsQuoting(AKey) then
-  begin
-    // Key needs quoting - write as single quoted key
-    // Don't split even if it contains dots
-    WriteString(AKey);
-  end
-  else if Pos('.', AKey) > 0 then
-  begin
-    // Key doesn't need quoting but has dots
-    // This is a dotted path - split and write parts
-    KeyParts := SplitDottedKey(AKey);
-
-    for i := 0 to High(KeyParts) do
-    begin
-      if i > 0 then
-        FStringBuilder.Append('.');
-
-      Part := KeyParts[i];
-      if NeedsQuoting(Part) then
-        WriteString(Part)
-      else
-        FStringBuilder.Append(Part);
-    end;
-  end
+    WriteString(AKey)
   else
-  begin
-    // Simple key without dots
     FStringBuilder.Append(AKey);
-  end;
 end;
 
 procedure TTOMLSerializer.WriteString(const AValue: string);
@@ -359,7 +337,9 @@ begin
   if DTObj.RawString <> '' then
     FStringBuilder.Append(DTObj.RawString)
   else
-    FStringBuilder.Append(FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz"Z"', DTObj.Value));
+//    FStringBuilder.Append(FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz"Z"', DTObj.Value));
+    // 3. 使用 FFormatSettings 确保时间格式化不受本地化影响
+    FStringBuilder.Append(FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz"Z"', DTObj.Value, FFormatSettings));
 end;
 
 //procedure TTOMLSerializer.WriteDateTime(const ADateTime: TDateTime);
@@ -416,8 +396,24 @@ begin
       FStringBuilder.Append(IntToStr(AValue.AsInteger));
 
     tvtFloat:
-      FStringBuilder.Append(FloatToStr(AValue.AsFloat));
-
+      begin
+        var F: Double := AValue.AsFloat;
+        var S: string;
+        if IsNan(F) then
+          S := 'nan'
+        else if IsInfinite(F) then
+        begin
+          if F > 0 then S := 'inf' else S := '-inf';
+        end
+        else
+        begin
+          S := FloatToStr(F, FFormatSettings);
+          // TOML requires a decimal point or exponent in float literals
+          if (Pos('.', S) = 0) and (Pos('e', LowerCase(S)) = 0) then
+            S := S + '.0';
+        end;
+        FStringBuilder.Append(S);
+      end;
     tvtBoolean:
       if AValue.AsBoolean then
         FStringBuilder.Append('true')
@@ -436,136 +432,256 @@ begin
   end;
 end;
 
+//procedure TTOMLSerializer.WriteTable(const ATable: TTOMLTable; const AInline: Boolean = False);
+//var
+//  First: Boolean;
+//  Pair: TTOMLKeyValuePair;
+//  SubTable: TTOMLTable;
+//  i: Integer;
+//  ArrayValue: TTOMLArray;
+//  AllTables: Boolean;
+//  TablePath: string;
+//  PathComponents: TStringList;
+//  Component: string;
+//begin
+//  if AInline then
+//  begin
+//    // Write inline table format: { key1 = value1, key2 = value2 }
+//    FStringBuilder.Append('{');
+//    First := True;
+//
+//    for Pair in ATable.Items do
+//    begin
+//      if not First then
+//        FStringBuilder.Append(', ')
+//      else
+//        First := False;
+//
+//      WriteKey(Pair.Key);
+//      FStringBuilder.Append(' = ');
+//      WriteValue(Pair.Value);
+//    end;
+//
+//    FStringBuilder.Append('}');
+//  end
+//  else
+//  begin
+//    // First write all non-array and non-table values
+//    for Pair in ATable.Items do
+//    begin
+//      if not ((Pair.Value.ValueType = tvtTable) or ((Pair.Value.ValueType = tvtArray) and (Pair.Value.AsArray.Count
+//        > 0) and (Pair.Value.AsArray.GetItem(0).ValueType = tvtTable))) then
+//      begin
+//        // Remove indentation for table key-value pairs
+//        WriteKey(Pair.Key);
+//        FStringBuilder.Append(' = ');
+//        WriteValue(Pair.Value);
+//        WriteLine;
+//      end;
+//    end;
+//
+//    // Then write arrays of tables
+//    for Pair in ATable.Items do
+//    begin
+//      if (Pair.Value.ValueType = tvtArray) and (Pair.Value.AsArray.Count > 0) then
+//      begin
+//        ArrayValue := Pair.Value.AsArray;
+//
+//        // Check if this is an array of tables
+//        AllTables := True;
+//        for i := 0 to ArrayValue.Count - 1 do
+//        begin
+//          if ArrayValue.GetItem(i).ValueType <> tvtTable then
+//          begin
+//            AllTables := False;
+//            Break;
+//          end;
+//        end;
+//
+//        if AllTables then
+//        begin
+//          // Write as array of tables [[key]]
+//          for i := 0 to ArrayValue.Count - 1 do
+//          begin
+//            if i > 0 then
+//              WriteLine;
+//            WriteLine('[[' + Pair.Key + ']]');
+//
+//            // Save current indentation level
+//            WriteTable(ArrayValue.GetItem(i).AsTable);
+//          end;
+//          continue;
+//        end;
+//      end;
+//
+//      // Handle regular tables with path tracking
+//      if Pair.Value.ValueType = tvtTable then
+//      begin
+//        SubTable := Pair.Value.AsTable;
+//
+//        WriteLine;
+//
+//        // Build path components properly
+//        PathComponents := TStringList.Create;
+//        try
+//          // Add all current path components with proper quoting if needed
+//          for i := 0 to FCurrentPath.Count - 1 do
+//          begin
+//            Component := FCurrentPath[i];
+//            if NeedsQuoting(Component) then
+//              PathComponents.Add('"' + Component + '"')
+//            else
+//              PathComponents.Add(Component);
+//          end;
+//
+//          // Add the current key with proper quoting if needed
+//          if NeedsQuoting(Pair.Key) then
+//            PathComponents.Add('"' + Pair.Key + '"')
+//          else
+//            PathComponents.Add(Pair.Key);
+//
+//          // Join with dots to create the full path
+//          TablePath := '';
+//          for i := 0 to PathComponents.Count - 1 do
+//          begin
+//            if i > 0 then
+//              TablePath := TablePath + '.';
+//            TablePath := TablePath + PathComponents[i];
+//          end;
+//
+//          WriteLine('[' + TablePath + ']');
+//
+//          // Process the subtable recursively if it has items
+//          if SubTable.Items.Count > 0 then
+//          begin
+//            FCurrentPath.Add(Pair.Key);
+//            WriteTable(SubTable);
+//            FCurrentPath.Delete(FCurrentPath.Count - 1);
+//          end;
+//        finally
+//          PathComponents.Free;
+//        end;
+//      end;
+//    end;
+//  end;
+//end;
+
+
 procedure TTOMLSerializer.WriteTable(const ATable: TTOMLTable; const AInline: Boolean = False);
 var
   First: Boolean;
-  Pair: TTOMLKeyValuePair;
   SubTable: TTOMLTable;
   i: Integer;
   ArrayValue: TTOMLArray;
   AllTables: Boolean;
-  TablePath: string;
-  PathComponents: TStringList;
-  Component: string;
+  SortedKeys: TList<string>;
+  K: string;
+  V: TTOMLValue;
 begin
   if AInline then
   begin
-    // Write inline table format: { key1 = value1, key2 = value2 }
+    // --- 内联表部分 ---
     FStringBuilder.Append('{');
     First := True;
 
-    for Pair in ATable.Items do
-    begin
-      if not First then
-        FStringBuilder.Append(', ')
-      else
-        First := False;
+    // 提取并排序 Key
+    SortedKeys := TList<string>.Create;
+    try
+      for K in ATable.Items.Keys do SortedKeys.Add(K);
+      SortedKeys.Sort;
 
-      WriteKey(Pair.Key);
-      FStringBuilder.Append(' = ');
-      WriteValue(Pair.Value);
+      for K in SortedKeys do
+      begin
+        V := ATable.Items[K];
+        if not First then
+          FStringBuilder.Append(', ')
+        else
+          First := False;
+
+        WriteKey(K);
+        FStringBuilder.Append(' = ');
+        WriteValue(V);
+      end;
+    finally
+      SortedKeys.Free;
     end;
 
     FStringBuilder.Append('}');
   end
   else
   begin
-    // First write all non-array and non-table values
-    for Pair in ATable.Items do
-    begin
-      if not ((Pair.Value.ValueType = tvtTable) or ((Pair.Value.ValueType = tvtArray) and (Pair.Value.AsArray.Count
-        > 0) and (Pair.Value.AsArray.GetItem(0).ValueType = tvtTable))) then
-      begin
-        // Remove indentation for table key-value pairs
-        WriteKey(Pair.Key);
-        FStringBuilder.Append(' = ');
-        WriteValue(Pair.Value);
-        WriteLine;
-      end;
-    end;
+    // --- 标准表部分 ---
+    SortedKeys := TList<string>.Create;
+    try
+      // 1. 获取所有 Key 并排序
+      for K in ATable.Items.Keys do SortedKeys.Add(K);
+      SortedKeys.Sort;
 
-    // Then write arrays of tables
-    for Pair in ATable.Items do
-    begin
-      if (Pair.Value.ValueType = tvtArray) and (Pair.Value.AsArray.Count > 0) then
+      // 2. 第一轮遍历：先写入普通键值对（非表、非对象数组）
+      // 根据 TOML 规范，普通键值对必须写在任何子表之前
+      for K in SortedKeys do
       begin
-        ArrayValue := Pair.Value.AsArray;
-
-        // Check if this is an array of tables
-        AllTables := True;
-        for i := 0 to ArrayValue.Count - 1 do
+        V := ATable.Items[K];
+        // 判断是否为子表或内含表的数组（这些需要放在后面写）
+        if not ((V.ValueType = tvtTable) or
+           ((V.ValueType = tvtArray) and (V.AsArray.Count > 0) and (V.AsArray.GetItem(0).ValueType = tvtTable))) then
         begin
-          if ArrayValue.GetItem(i).ValueType <> tvtTable then
-          begin
-            AllTables := False;
-            Break;
-          end;
+          WriteKey(K);
+          FStringBuilder.Append(' = ');
+          WriteValue(V);
+          WriteLine;
         end;
+      end;
 
-        if AllTables then
+      // 3. 第二轮遍历：写入数组表 [[key]] 和 子表 [key]
+      for K in SortedKeys do
+      begin
+        V := ATable.Items[K];
+
+        // 处理数组表 (Array of Tables)
+        if (V.ValueType = tvtArray) and (V.AsArray.Count > 0) then
         begin
-          // Write as array of tables [[key]]
+          ArrayValue := V.AsArray;
+          AllTables := True;
           for i := 0 to ArrayValue.Count - 1 do
           begin
-            if i > 0 then
+            if ArrayValue.GetItem(i).ValueType <> tvtTable then
+            begin
+              AllTables := False;
+              Break;
+            end;
+          end;
+
+          if AllTables then
+          begin
+            for i := 0 to ArrayValue.Count - 1 do
+            begin
               WriteLine;
-            WriteLine('[[' + Pair.Key + ']]');
-
-            // Save current indentation level
-            WriteTable(ArrayValue.GetItem(i).AsTable);
+              WriteLine('[[' + BuildTablePath(K) + ']]');
+              FCurrentPath.Add(K);
+              WriteTable(ArrayValue.GetItem(i).AsTable);
+              FCurrentPath.Delete(FCurrentPath.Count - 1);
+            end;
+            Continue;
           end;
-          continue;
         end;
-      end;
 
-      // Handle regular tables with path tracking
-      if Pair.Value.ValueType = tvtTable then
-      begin
-        SubTable := Pair.Value.AsTable;
-
-        WriteLine;
-
-        // Build path components properly
-        PathComponents := TStringList.Create;
-        try
-          // Add all current path components with proper quoting if needed
-          for i := 0 to FCurrentPath.Count - 1 do
-          begin
-            Component := FCurrentPath[i];
-            if NeedsQuoting(Component) then
-              PathComponents.Add('"' + Component + '"')
-            else
-              PathComponents.Add(Component);
-          end;
-
-          // Add the current key with proper quoting if needed
-          if NeedsQuoting(Pair.Key) then
-            PathComponents.Add('"' + Pair.Key + '"')
-          else
-            PathComponents.Add(Pair.Key);
-
-          // Join with dots to create the full path
-          TablePath := '';
-          for i := 0 to PathComponents.Count - 1 do
-          begin
-            if i > 0 then
-              TablePath := TablePath + '.';
-            TablePath := TablePath + PathComponents[i];
-          end;
-
-          WriteLine('[' + TablePath + ']');
-
-          // Process the subtable recursively if it has items
+        // 处理常规子表 [table]
+        if V.ValueType = tvtTable then
+        begin
+          SubTable := V.AsTable;
+          WriteLine;
+          WriteLine('[' + BuildTablePath(K) + ']');
           if SubTable.Items.Count > 0 then
           begin
-            FCurrentPath.Add(Pair.Key);
+            FCurrentPath.Add(K);
             WriteTable(SubTable);
             FCurrentPath.Delete(FCurrentPath.Count - 1);
           end;
-        finally
-          PathComponents.Free;
         end;
       end;
+    finally
+      SortedKeys.Free;
     end;
   end;
 end;
