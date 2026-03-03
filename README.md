@@ -16,9 +16,10 @@
      
 ```
       // 从文件加载
-      Config := NewTable.LoadFromFile('config.toml');
-      // 或：
       Config := LoadToml('config.toml');
+      // 或：
+      Config := NewTable;
+      Config.LoadFromFile('config.toml');
       // 基本类型
       Config.GetStr(Key, Default);       // 字符串
       Config.GetInt(Key, Default);       // 整数
@@ -103,9 +104,10 @@
 - 示例：
 ```
     //打开 toml 文件
-    Config := NewTable.LoadFromFile('config.toml');
-    // 或：
     Config := LoadToml('config.toml');
+    // 或：
+    Config := NewTable;
+    Config.LoadFromFile('config.toml');
     // 读取
     width := Config.GetInt('width', 800);
     title := Config.GetStr('title');
