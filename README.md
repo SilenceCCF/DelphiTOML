@@ -2,14 +2,18 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Delphi](https://img.shields.io/badge/Delphi2005%20and%20high-green.svg)](https://www.embarcadero.com/products/delphi/)
-[![TOML](https://img.shields.io/badge/TOML-1.0.0-green.svg)](https://toml.io/)
+[![TOML](https://img.shields.io/badge/TOML-1.1.0-green.svg)](https://toml.io/)
 
-一个解析 [TOML](https://toml.io/) 格式的单元，改写自 [ikelaiah 的 TOML Parser for Free Pascal](https://github.com/ikelaiah/toml-fp) v1.0.3 版本，适用于 Delphi 2005 及更高版本，并做了以下修改：
-1. TOML.Parser.pas 单元的 ParseTOMLFile 函数增加自动识别文件编码格式功能，增强兼容性。
-2. 如要支持更低版本的 delphi，只须将源码中的所有 for-in 循环替换为 for-to 循环即可。
-3. 增加 TOML.Helper.pas 单元，简化读写操作，该单元稍做修改也可适用于 Free Pascal。
-4. 修订原单元错误或增充未实现功能：如 Unicode 转义序列未实现、缺少 \b \f 转义序列、未支持行尾反斜杠、未去除多行字符串首行换行符、未处理带引号的点分隔键、未验证数字中的下划线、行尾反斜杠逻辑错误、纯时间格式解析错误等。
-5. 新增测试单元，其它待续。
+一个解析 [TOML](https://toml.io/) V 1.1.0 版本格式的单元，改写自 [ikelaiah 的 TOML Parser for Free Pascal](https://github.com/ikelaiah/toml-fp) v1.0.3 版本，适用于 Delphi 2005 及更高版本，并做了大量修订及功能增强：
+1. 完全支持 [TOML V1.1.0](https://toml.io/en/v1.1.0) 规范，经测试已经通过了[TOML 官方测试程序](https://github.com/toml-lang/toml-test)的全部 894 项测试(V 1.1.0 版本)。
+2. 增加 TOML.Helper.pas 单元，新增大量函数和方法，简化读写操作。
+3. 增加 TOML.Json.pas 单元，支持 TOML 和 JSON 格式的相互转换。
+4. 浮点数和日期类型数据支持以原始精度格式输出：RawString。
+5. 稍做修改也可以支持更低版本的 delphi 和 Free Pascal。
+6. 测试单元用法，编译 tomldecoder 和 TOMLEncoder 单元为 exe 文件，下载[官方测试程序](https://github.com/toml-lang/toml-test/releases)后运行：
+```
+toml-test.exe  test -decoder tomldecoder.exe -encoder TOMLEncoder.exe -toml 1.1.0 -v > results.txt
+```
 
 以下是相比原单元，新增的方法：
 - 读取
@@ -99,6 +103,11 @@
 
       ParseTOML(ATOML);                  // 由字符串载入数据
       LoadTOML(FileName);                // 由文件载入数据
+      // JSON 相关
+      ToJson(APretty,Integer)            // 转换为 JSON 字符串
+      SaveToJSONFile(FileName,aPretty,ABOM) //保存为 JSON 文件
+      LoadFromJSON(JSONString)           // 从 JSON 字符串读取
+      LoadFromJSONFile(FileName,ANullAsEmptyString)     //从 JSON 文件读取
 
 ```  
 - 示例：
