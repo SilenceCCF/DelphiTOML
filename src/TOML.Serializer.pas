@@ -1,127 +1,92 @@
-{ TOML.Serializer.pas
-  This unit implements serialization of TOML data structures to text format.
-  It handles converting TOML objects into properly formatted TOML text that follows
-  the TOML v1.0.0 specification.
-  The serializer supports all TOML data types and features:
-  - Basic key/value pairs with proper quoting and escaping
-  - Tables and inline tables with proper nesting
-  - Arrays with proper formatting and type consistency
-  - Basic strings and literal strings with proper escaping
-  - Numbers in decimal format (integers and floats)
-  - Booleans and dates/times in standard format
-  Key features:
-  - Efficient string building using TStringBuilder
-  - Proper indentation and formatting for readability
-  - Handles nested tables and arrays correctly
-  - Preserves table ordering as per TOML spec
-  - Proper escaping of special characters in strings
-}
+(* TOML_Serializer.pas
+  TOML 数据结构序列化单元。
+  本单元将 TOML 对象转换为符合 TOML v1.0.0 规范的文本格式，支持：
+    - 键值对（含键名自动引号与转义）
+    - 普通表 [table] 和数组表 [[array]]
+    - 内联表 { key = value, ... }
+    - 数组 [ ... ]
+    - 基本字符串（含转义）
+    - 整数和浮点数（含 inf / nan，保持原始精度）
+    - 布尔值
+    - 日期时间（RFC 3339，优先使用原始文本）
+  实现要点：
+    - 使用 TStringBuilder 高效构建字符串
+    - 遍历表键时先排序，保证输出顺序确定
+    - 键值对先于子表和数组表输出（符合 TOML 规范要求）
+    - 每个表段的路径通过 FCurrentPath 跟踪，用于生成 [a.b.c] 头部
+*)
 unit TOML.Serializer;
-//{$mode objfpc}{$H+}{$J-}
 
 interface
 
 uses
   SysUtils, Classes, Math, TOML.Types, Generics.Collections;
-
-  {$IF CompilerVersion < 20.0}
-
+{$IF CompilerVersion < 20.0}
 function CharInSet(C: Char; const CharSet: TSysCharSet): Boolean; inline;
-
-  {$IFEND}
+{$IFEND}
 
 type
-  { Key-Value pair type for TOML tables }
+  { 键值对类型（用于表字典的枚举） }
   TTOMLKeyValuePair = TPair<string, TTOMLValue>;
-  { TOML serializer class that converts TOML data to text format
-    This class handles the conversion of TOML data structures into properly
-    formatted TOML text, following the TOML v1.0.0 specification }
-
+  { TOML 序列化器 —— 将 TOML 数据结构转换为文本格式 }
   TTOMLSerializer = class
   private
-    FStringBuilder: TStringBuilder;  // StringBuilder for efficient string building
-    FIndentLevel: Integer;           // Current indentation level
-    FCurrentPath: TStringList;       // Tracks current table path for proper nesting
-    FFormatSettings: TFormatSettings; // Add formatting field
-    { Writes indentation at current level
-      Used to maintain consistent formatting }
+    FStringBuilder: TStringBuilder;   // 输出缓冲区
+    FIndentLevel: Integer;            // 当前缩进层次
+    FCurrentPath: TStringList;        // 当前表路径（用于生成表头）
+    FFormatSettings: TFormatSettings; // 不变量格式设置（小数点为 '.'，不受本地化影响）
+
+    { 写入当前缩进空格 }
     procedure WriteIndent;
 
-    { Writes a line with optional content and newline
-      @param ALine Optional string content to write }
+    { 写入一行文本（含尾部换行），ALine 为空时只写换行 }
     procedure WriteLine(const ALine: string = '');
 
-    { Writes a TOML key with proper quoting
-      @param AKey The key to write
-      Handles escaping and quoting of keys as needed }
+    { 写入单个键，必要时加引号并转义 }
     procedure WriteKey(const AKey: string);
 
-    { Writes a TOML string value with proper escaping
-      @param AValue The string to write
-      Handles all required string escaping per TOML spec }
+    { 写入带引号的字符串值（含 TOML 规范转义） }
     procedure WriteString(const AValue: string);
 
-    { Writes any TOML value based on its type
-      @param AValue The value to write
-      Dispatches to appropriate write method based on value type }
+    { 根据值类型分派到对应的写入方法 }
     procedure WriteValue(const AValue: TTOMLValue);
 
-    { Writes a TOML table
-      @param ATable The table to write
-      @param AInline Whether to write as inline table
-      Handles both standard and inline table formats }
+    //{ 写入表（AInline=True 时输出内联格式 { ... }，否则输出标准块格式） }
     procedure WriteTable(const ATable: TTOMLTable; const AInline: Boolean = False);
 
-    { Writes a TOML array
-      @param AArray The array to write
-      Handles arrays of any valid TOML type }
+    { 写入数组，始终输出 [ ... ] 格式（是否用 [[header]] 由 WriteTable 决定） }
     procedure WriteArray(const AArray: TTOMLArray);
 
-    { Writes a TOML datetime value
-      @param ADateTime The datetime to write
-      Formats datetime according to RFC 3339 }
+    { 写入日期时间值（优先使用原始文本，否则按 Kind 格式化输出） }
     procedure WriteDateTime(const ADateTimeValue: TTOMLValue);
-//    procedure WriteDateTime(const ADateTime: TDateTime);
 
-    { Checks if a key needs to be quoted
-      @param AKey The key to check
-      @returns True if key needs quoting, False otherwise }
+    { 构建当前完整表路径字符串，形如 "a.b.\"c.d\""，
+      供 [path] 或 [[path]] 头部使用 }
     function BuildTablePath(const NewKey: string): string;
-//    function SplitDottedKey(const CompositeKey: string): TArray<string>;
-    function NeedsQuoting(const AKey: string): Boolean;
-  public
-    { Creates a new TOML serializer instance }
-    constructor Create;
 
-    { Cleans up the serializer instance }
+    { 判断键名是否需要加引号
+      （仅包含 A-Z、a-z、0-9、_ 和 - 的键无需引号） }
+    function NeedsQuoting(const AKey: string): Boolean;
+
+  public
+    constructor Create;
     destructor Destroy; override;
 
-    { Serializes a TOML value to string format
-      @param AValue The value to serialize
-      @returns The serialized TOML string
-      @raises ETOMLSerializerException if value cannot be serialized }
+    { 将 TOML 值序列化为字符串
+      @param AValue 要序列化的值
+      @returns TOML 格式文本
+      @raises ETOMLSerializerException 若值无法序列化 }
     function Serialize(const AValue: TTOMLValue): string;
   end;
-{ High-level serialization functions }
-
-{ Serializes a TOML value to string format
-  @param AValue The value to serialize
-  @returns The serialized TOML string
-  @raises ETOMLSerializerException if value cannot be serialized }
-
+{ 将 TOML 值序列化为字符串（高层封装）
+  @raises ETOMLSerializerException 若值无法序列化 }
 function SerializeTOML(const AValue: TTOMLValue): string;
-{ Serializes a TOML value to a file
-  @param AValue The value to serialize
-  @param AFileName The output file path
-  @returns True if successful, False otherwise
-  @raises ETOMLSerializerException if value cannot be serialized
-  @raises EFileStreamError if file cannot be written }
-
-function SerializeTOMLToFile(const AValue: TTOMLValue; const AFileName: string; BOM: boolean = true): Boolean;
+{ 将 TOML 值序列化并写入文件（高层封装）
+  @param BOM 是否写入 UTF-8 BOM（默认 True）
+  @returns True 若成功，否则 False }
+function SerializeTOMLToFile(const AValue: TTOMLValue; const AFileName: string; BOM: Boolean = True): Boolean;
 
 implementation
-{ High-level function implementations }
-
 {$IF CompilerVersion < 20.0}
 
 function CharInSet(C: Char; const CharSet: TSysCharSet): Boolean;
@@ -129,6 +94,8 @@ begin
   Result := C in CharSet;
 end;
 {$IFEND}
+
+{ 高层函数实现 }
 
 function SerializeTOML(const AValue: TTOMLValue): string;
 var
@@ -142,7 +109,7 @@ begin
   end;
 end;
 
-function SerializeTOMLToFile(const AValue: TTOMLValue; const AFileName: string; BOM: boolean = true): Boolean;
+function SerializeTOMLToFile(const AValue: TTOMLValue; const AFileName: string; BOM: Boolean = True): Boolean;
 var
   TOML: string;
 begin
@@ -159,10 +126,10 @@ begin
       Free;
     end;
   except
-    // Return False on any error
+    // 发生任何错误时返回 False
   end;
 end;
-{ TTOMLSerializer implementation }
+{ TTOMLSerializer }
 
 constructor TTOMLSerializer.Create;
 begin
@@ -170,12 +137,13 @@ begin
   FStringBuilder := TStringBuilder.Create;
   FIndentLevel := 0;
   FCurrentPath := TStringList.Create;
-  FCurrentPath.Delimiter := '.';      // Set delimiter for path joining
-  FCurrentPath.StrictDelimiter := True; // Use strict delimiter handling
-  {$IF CompilerVersion >= 22.0} // XE 及以上版本
+  FCurrentPath.Delimiter := '.';
+  FCurrentPath.StrictDelimiter := True;
+
+  // 使用不变量格式设置，保证小数点始终为 '.'，不受系统区域影响
+  {$IF CompilerVersion >= 22.0}
   FFormatSettings := TFormatSettings.Invariant;
   {$ELSE}
-  // for Delphi 2009/2010
   GetLocaleFormatSettings(LOCALE_USER_DEFAULT, FFormatSettings);
   FFormatSettings.DecimalSeparator := '.';
   FFormatSettings.ThousandSeparator := #0;
@@ -209,36 +177,65 @@ begin
   FStringBuilder.AppendLine;
 end;
 
-// Build a complete table-header path string: FCurrentPath segments + NewKey.
-// Each segment is independently checked with NeedsQuoting; segments containing
-// dots or special characters are wrapped in "..." with proper escaping.
-// Result is ready to be placed inside [ ] or [[ ]].
+function TTOMLSerializer.NeedsQuoting(const AKey: string): Boolean;
+var
+  i: Integer;
+  C: Char;
+begin
+  // 空键必须加引号
+  if AKey = '' then
+    Exit(True);
+
+  // 仅含 A-Z、a-z、0-9、_ 或 - 的键无需引号
+  for i := 1 to Length(AKey) do
+  begin
+    C := AKey[i];
+    if not (CharInSet(C, ['A'..'Z']) or CharInSet(C, ['a'..'z']) or CharInSet(C, ['0'..'9']) or (C = '_') or (C
+      = '-')) then
+      Exit(True);
+  end;
+  Result := False;
+end;
+
 function TTOMLSerializer.BuildTablePath(const NewKey: string): string;
 var
   SB: TStringBuilder;
   i: Integer;
+  { 追加单个路径段，含特殊字符时加双引号并转义 }
 
   procedure AppendSeg(const S: string);
   var
-    j: Integer;
+    j, Code: Integer;
   begin
     if NeedsQuoting(S) then
     begin
       SB.Append('"');
       for j := 1 to Length(S) do
+      begin
+        Code := Ord(S[j]);
         case S[j] of
-          #8:  SB.Append('\b');
-          #9:  SB.Append('\t');
-          #10: SB.Append('\n');
-          #13: SB.Append('\r');
-          '"': SB.Append('\"');
-          '\': SB.Append('\\');
+          #8:
+            SB.Append('\b');
+          #9:
+            SB.Append('\t');
+          #10:
+            SB.Append('\n');
+          #12:
+            SB.Append('\f');
+          #13:
+            SB.Append('\r');
+          '"':
+            SB.Append('\"');
+          '\':
+            SB.Append('\\');
         else
-          if S[j] < #32 then
-            SB.AppendFormat('\u%.4x', [Ord(S[j])])
+          // 转义所有控制字符（0x00-0x1F 及 0x7F）
+          if (Code <= 31) or (Code = 127) then
+            SB.AppendFormat('\u%.4x', [Code])
           else
             SB.Append(S[j]);
         end;
+      end;
       SB.Append('"');
     end
     else
@@ -250,10 +247,12 @@ begin
   try
     for i := 0 to FCurrentPath.Count - 1 do
     begin
-      if i > 0 then SB.Append('.');
+      if i > 0 then
+        SB.Append('.');
       AppendSeg(FCurrentPath[i]);
     end;
-    if FCurrentPath.Count > 0 then SB.Append('.');
+    if FCurrentPath.Count > 0 then
+      SB.Append('.');
     AppendSeg(NewKey);
     Result := SB.ToString;
   finally
@@ -261,91 +260,9 @@ begin
   end;
 end;
 
-//function TTOMLSerializer.SplitDottedKey(const CompositeKey: string): TArray<string>;
-//var
-//  Parts: TList<string>;
-//  CurrentPart: string;
-//  i: Integer;
-//  InQuotes: Boolean;
-//  Ch: Char;
-//begin
-//  Parts := TList<string>.Create;
-//  try
-//    CurrentPart := '';
-//    InQuotes := False;
-//
-//    i := 1;
-//    while i <= Length(CompositeKey) do
-//    begin
-//      Ch := CompositeKey[i];
-//
-//      if Ch = '"' then
-//      begin
-//        // Toggle the quotes. Key point: Do not add the quotes themselves.
-//        InQuotes := not InQuotes;
-//        Inc(i);
-//        Continue;
-//      end;
-//
-//      if (Ch = '.') and (not InQuotes) then
-//      begin
-//        // Only the period outside the quotation marks is a separator.
-//        if CurrentPart <> '' then
-//        begin
-//          Parts.Add(CurrentPart);
-//          CurrentPart := '';
-//        end;
-//      end
-//      else
-//      begin
-//        // Ordinary characters or dots within quotation marks
-//        CurrentPart := CurrentPart + Ch;
-//      end;
-//
-//      Inc(i);
-//    end;
-//
-//    // Add the last part
-//    if CurrentPart <> '' then
-//      Parts.Add(CurrentPart);
-//
-//    // Convert to array
-//    SetLength(Result, Parts.Count);
-//    for i := 0 to Parts.Count - 1 do
-//      Result[i] := Parts[i];
-//  finally
-//    Parts.Free;
-//  end;
-//end;
-
-function TTOMLSerializer.NeedsQuoting(const AKey: string): Boolean;
-var
-  i: Integer;
-  C: Char;
-begin
-  // Empty keys need quoting
-  if AKey = '' then
-    Exit(True);
-
-  // Check all characters - must be letter, number, underscore or dash
-  for i := 1 to Length(AKey) do
-  begin
-    C := AKey[i];
-//    if not ((C in ['A'..'Z']) or (C in ['a'..'z']) or
-//            (C in ['0'..'9']) or (C = '_') or (C = '-')) then
-    if not (CharInSet(C, ['A'..'Z']) or CharInSet(C, ['a'..'z']) or CharInSet(C, ['0'..'9']) or (C = '_') or (C
-      = '-')) then
-      Exit(True);
-  end;
-
-  Result := False;
-end;
-
-
 procedure TTOMLSerializer.WriteKey(const AKey: string);
 begin
-  // AKey is always a single key segment here.
-  // Any segment containing dots or special chars (e.g. "tt.com") must be quoted.
+  // 单个键段：含特殊字符（包括点号）时需加引号
   if NeedsQuoting(AKey) then
     WriteString(AKey)
   else
@@ -354,30 +271,33 @@ end;
 
 procedure TTOMLSerializer.WriteString(const AValue: string);
 var
-  i: Integer;
+  i, Code: Integer;
   C: Char;
 begin
   FStringBuilder.Append('"');
   for i := 1 to Length(AValue) do
   begin
     C := AValue[i];
+    Code := Ord(C);
     case C of
       #8:
-        FStringBuilder.Append('\b');   // Backspace
+        FStringBuilder.Append('\b');  // 退格
       #9:
-        FStringBuilder.Append('\t');   // Tab
+        FStringBuilder.Append('\t');  // 制表符
       #10:
-        FStringBuilder.Append('\n');   // Line feed
+        FStringBuilder.Append('\n');  // 换行
+      #12:
+        FStringBuilder.Append('\f');  // 换页
       #13:
-        FStringBuilder.Append('\r');   // Carriage return
+        FStringBuilder.Append('\r');  // 回车
       '"':
-        FStringBuilder.Append('\"');   // Quote
+        FStringBuilder.Append('\"');  // 双引号
       '\':
-        FStringBuilder.Append('\\');   // Backslash
+        FStringBuilder.Append('\\');  // 反斜杠
     else
-      if C < #32 then
-          // Control characters as unicode escapes
-        FStringBuilder.AppendFormat('\u%.4x', [Ord(C)])
+      // 转义所有控制字符（0x00-0x1F 及 0x7F）
+      if (Code <= 31) or (Code = 127) then
+        FStringBuilder.AppendFormat('\u%.4x', [Code])
       else
         FStringBuilder.Append(C);
     end;
@@ -385,90 +305,69 @@ begin
   FStringBuilder.Append('"');
 end;
 
-
 procedure TTOMLSerializer.WriteDateTime(const ADateTimeValue: TTOMLValue);
 var
   DateTimeVal: TTOMLDateTime;
-  Str: string;
+  Str, FracStr: string;
   Hours, Minutes: Integer;
   Sign: Char;
+  FracSec, FracPart: Double;
+  SecInt: Integer;
+  { 计算并追加小数秒（如有） }
+
+  procedure AppendFractionalSeconds;
+  begin
+    FracSec := Frac(DateTimeVal.Value) * 24 * 3600;
+    SecInt := Trunc(FracSec);
+    FracPart := FracSec - SecInt;
+    if FracPart > 0.0 then
+    begin
+      FracStr := FloatToStrF(FracPart, ffFixed, 15, 6, FFormatSettings);
+      // 去掉前导 "0"，保留小数点及后续数字
+      if (Length(FracStr) > 2) and (FracStr[1] = '0') and (FracStr[2] = '.') then
+        Delete(FracStr, 1, 1);
+      Str := Str + FracStr;
+    end;
+  end;
+
 begin
   if not (ADateTimeValue is TTOMLDateTime) then
     raise ETOMLSerializerException.Create('Invalid datetime value type');
 
   DateTimeVal := TTOMLDateTime(ADateTimeValue);
 
-  // If we have the original raw string, use it to preserve exact format
-  // This ensures we maintain the exact representation from the source
+  // 优先使用原始文本，保证格式精确还原
   if DateTimeVal.RawString <> '' then
   begin
     FStringBuilder.Append(DateTimeVal.RawString);
     Exit;
   end;
 
-  // Otherwise, format according to the datetime kind
+  // 按日期时间子类型生成文本
   case DateTimeVal.Kind of
     tdkLocalDate:
-      // Local Date: 1979-05-27
+      // 本地日期：1979-05-27
       Str := FormatDateTime('yyyy-mm-dd', DateTimeVal.Value);
 
     tdkLocalTime:
       begin
-        // Local Time: 07:32:00 or 07:32:00.999999
+        // 本地时间：07:32:00[.999999]
         Str := FormatDateTime('hh:nn:ss', DateTimeVal.Value);
-
-        // Add fractional seconds if present
-        var FracSec: Double := Frac(DateTimeVal.Value) * 24 * 3600;
-        var Sec: Integer := Trunc(FracSec);
-        var Frac: Double := FracSec - Sec;
-        if Frac > 0.0 then
-        begin
-          var FracStr: string := FloatToStrF(Frac, ffFixed, 15, 6, FFormatSettings);
-          // Remove leading "0."
-          if (Length(FracStr) > 2) and (FracStr[1] = '0') and (FracStr[2] = '.') then
-            Delete(FracStr, 1, 1);
-          Str := Str + FracStr;
-        end;
+        AppendFractionalSeconds;
       end;
 
     tdkLocalDateTime:
       begin
-        // Local Date-Time: 1979-05-27T07:32:00 or 1979-05-27T07:32:00.999999
+        // 本地日期时间：1979-05-27T07:32:00[.999999]
         Str := FormatDateTime('yyyy-mm-dd"T"hh:nn:ss', DateTimeVal.Value);
-
-        // Add fractional seconds if present
-        var FracSec: Double := Frac(DateTimeVal.Value) * 24 * 3600;
-        var Sec: Integer := Trunc(FracSec);
-        var Frac: Double := FracSec - Sec;
-        if Frac > 0.0 then
-        begin
-          var FracStr: string := FloatToStrF(Frac, ffFixed, 15, 6, FFormatSettings);
-          // Remove leading "0."
-          if (Length(FracStr) > 2) and (FracStr[1] = '0') and (FracStr[2] = '.') then
-            Delete(FracStr, 1, 1);
-          Str := Str + FracStr;
-        end;
+        AppendFractionalSeconds;
       end;
 
     tdkOffsetDateTime:
       begin
-        // Offset Date-Time: 1979-05-27T07:32:00Z or 1979-05-27T00:32:00-07:00
+        // 带时区偏移的日期时间：1979-05-27T07:32:00[.999999]Z 或 +HH:MM / -HH:MM
         Str := FormatDateTime('yyyy-mm-dd"T"hh:nn:ss', DateTimeVal.Value);
-
-        // Add fractional seconds if present
-        var FracSec: Double := Frac(DateTimeVal.Value) * 24 * 3600;
-        var Sec: Integer := Trunc(FracSec);
-        var Frac: Double := FracSec - Sec;
-        if Frac > 0.0 then
-        begin
-          var FracStr: string := FloatToStrF(Frac, ffFixed, 15, 6, FFormatSettings);
-          // Remove leading "0."
-          if (Length(FracStr) > 2) and (FracStr[1] = '0') and (FracStr[2] = '.') then
-            Delete(FracStr, 1, 1);
-          Str := Str + FracStr;
-        end;
-
-        // Add timezone offset
+        AppendFractionalSeconds;
         if DateTimeVal.TimeZoneOffset = 0 then
           Str := Str + 'Z'
         else
@@ -487,51 +386,27 @@ begin
   FStringBuilder.Append(Str);
 end;
 
-//procedure TTOMLSerializer.WriteDateTime(const ADateTime: TDateTime);
-//begin
-//  // Format as RFC 3339 UTC datetime
-//  FStringBuilder.Append(FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz"Z"', ADateTime));
-//end;
-
 procedure TTOMLSerializer.WriteArray(const AArray: TTOMLArray);
 var
   i: Integer;
-  Item: TTOMLValue;
-  AllTables: Boolean;
 begin
-  // Check if this is an array of tables (all elements are tables)
-  AllTables := (AArray.Count > 0);
+  // 数组始终输出 [ ... ] 格式，是否改用 [[header]] 由 WriteTable 负责判断
+  FStringBuilder.Append('[');
   for i := 0 to AArray.Count - 1 do
   begin
-    if AArray.GetItem(i).ValueType <> tvtTable then
-    begin
-      AllTables := False;
-      Break;
-    end;
+    if i > 0 then
+      FStringBuilder.Append(', ');
+    WriteValue(AArray.GetItem(i));
   end;
-
-  // Arrays of tables are handled specially during top-level serialization
-  if not AllTables then
-  begin
-    FStringBuilder.Append('[');
-
-    if AArray.Count > 0 then
-    begin
-      for i := 0 to AArray.Count - 1 do
-      begin
-        if i > 0 then
-          FStringBuilder.Append(', ');
-
-        Item := AArray.GetItem(i);
-        WriteValue(Item);
-      end;
-    end;
-
-    FStringBuilder.Append(']');
-  end;
+  FStringBuilder.Append(']');
 end;
 
 procedure TTOMLSerializer.WriteValue(const AValue: TTOMLValue);
+var
+  F: Double;
+  S: string;
+  CheckV: Double;
+  Code: Integer;
 begin
   case AValue.ValueType of
     tvtString:
@@ -540,59 +415,43 @@ begin
     tvtInteger:
       FStringBuilder.Append(IntToStr(AValue.AsInteger));
 
-tvtFloat:
-  begin
-    var F: Double := AValue.AsFloat;
-    var S: string;
-
-    // Handle special float values first
-    if IsNan(F) then
-    begin
-      // TOML supports nan, +nan, -nan
-      // We use 'nan' as the standard representation
-      S := 'nan';
-    end
-    else if IsInfinite(F) then
-    begin
-      // Handle positive and negative infinity
-      if F > 0 then
-        S := 'inf'
-      else
-        S := '-inf';
-    end
-    else
-    begin
-      // Regular float value
-      // Use FloatToStrF with sufficient precision for round-trip conversion
-      // 15 significant digits is enough for IEEE 754 double precision
-      S := FloatToStrF(F, ffGeneral, 15, 0, FFormatSettings);
-
-      // TOML requires that float literals contain a decimal point or exponent
-      // to distinguish them from integers
-      if (Pos('.', S) = 0) and (Pos('e', LowerCase(S)) = 0) and (Pos('E', S) = 0) then
+    tvtFloat:
       begin
-        // No decimal point or exponent found
-        // Check if the number is exactly representable as an integer
-        if (F >= Low(Int64)) and (F <= High(Int64)) and (Frac(F) = 0) then
+        F := AValue.AsFloat;
+
+        // 处理特殊浮点值
+        if IsNan(F) then
+          S := 'nan'
+        else if IsInfinite(F) then
         begin
-          // Add .0 to make it clear it's a float
-          S := S + '.0';
+          if F > 0 then
+            S := 'inf'
+          else
+            S := '-inf';
         end
         else
         begin
-          // Use exponential notation to ensure it's recognized as float
-          S := FloatToStrF(F, ffExponent, 15, 0, FFormatSettings);
+          // 优先使用原始文本（保留解析时的精度）
+          if (AValue is TTOMLFloat) and (TTOMLFloat(AValue).RawString <> '') then
+            S := TTOMLFloat(AValue).RawString
+          else
+          begin
+            // 智能精度：先尝试 15 位，若往返不一致则改用 17 位
+            S := FloatToStrF(F, ffGeneral, 15, 0, FFormatSettings);
+            Val(S, CheckV, Code);
+            if (Code <> 0) or (CheckV <> F) then
+              S := FloatToStrF(F, ffGeneral, 17, 0, FFormatSettings);
+          end;
+
+          // TOML 规范：浮点数文本中必须包含 '.' 或 'e'，
+          // 若两者均不存在（如整数样式），则补充 ".0"
+          if (Pos('.', S) = 0) and (Pos('e', LowerCase(S)) = 0) then
+            S := S + '.0';
         end;
+
+        FStringBuilder.Append(S);
       end;
 
-      // Additional validation: ensure the string is not just an integer
-      // This handles edge cases where FloatToStrF might produce integer-like output
-      if (Pos('.', S) = 0) and (Pos('e', LowerCase(S)) = 0) and (Pos('E', S) = 0) then
-        S := S + '.0';
-    end;
-
-    FStringBuilder.Append(S);
-  end;
     tvtBoolean:
       if AValue.AsBoolean then
         FStringBuilder.Append('true')
@@ -601,152 +460,17 @@ tvtFloat:
 
     tvtDateTime:
       WriteDateTime(AValue);
-//      WriteDateTime(AValue.AsDateTime);
 
     tvtArray:
       WriteArray(AValue.AsArray);
 
     tvtTable, tvtInlineTable:
-      WriteTable(AValue.AsTable, AValue.ValueType = tvtInlineTable);
+      // 嵌套在值位置的表始终以内联格式输出
+      WriteTable(AValue.AsTable, True);
   end;
 end;
 
-//procedure TTOMLSerializer.WriteTable(const ATable: TTOMLTable; const AInline: Boolean = False);
-//var
-//  First: Boolean;
-//  Pair: TTOMLKeyValuePair;
-//  SubTable: TTOMLTable;
-//  i: Integer;
-//  ArrayValue: TTOMLArray;
-//  AllTables: Boolean;
-//  TablePath: string;
-//  PathComponents: TStringList;
-//  Component: string;
-//begin
-//  if AInline then
-//  begin
-//    // Write inline table format: { key1 = value1, key2 = value2 }
-//    FStringBuilder.Append('{');
-//    First := True;
-//
-//    for Pair in ATable.Items do
-//    begin
-//      if not First then
-//        FStringBuilder.Append(', ')
-//      else
-//        First := False;
-//
-//      WriteKey(Pair.Key);
-//      FStringBuilder.Append(' = ');
-//      WriteValue(Pair.Value);
-//    end;
-//
-//    FStringBuilder.Append('}');
-//  end
-//  else
-//  begin
-//    // First write all non-array and non-table values
-//    for Pair in ATable.Items do
-//    begin
-//      if not ((Pair.Value.ValueType = tvtTable) or ((Pair.Value.ValueType = tvtArray) and (Pair.Value.AsArray.Count
-//        > 0) and (Pair.Value.AsArray.GetItem(0).ValueType = tvtTable))) then
-//      begin
-//        // Remove indentation for table key-value pairs
-//        WriteKey(Pair.Key);
-//        FStringBuilder.Append(' = ');
-//        WriteValue(Pair.Value);
-//        WriteLine;
-//      end;
-//    end;
-//
-//    // Then write arrays of tables
-//    for Pair in ATable.Items do
-//    begin
-//      if (Pair.Value.ValueType = tvtArray) and (Pair.Value.AsArray.Count > 0) then
-//      begin
-//        ArrayValue := Pair.Value.AsArray;
-//
-//        // Check if this is an array of tables
-//        AllTables := True;
-//        for i := 0 to ArrayValue.Count - 1 do
-//        begin
-//          if ArrayValue.GetItem(i).ValueType <> tvtTable then
-//          begin
-//            AllTables := False;
-//            Break;
-//          end;
-//        end;
-//
-//        if AllTables then
-//        begin
-//          // Write as array of tables [[key]]
-//          for i := 0 to ArrayValue.Count - 1 do
-//          begin
-//            if i > 0 then
-//              WriteLine;
-//            WriteLine('[[' + Pair.Key + ']]');
-//
-//            // Save current indentation level
-//            WriteTable(ArrayValue.GetItem(i).AsTable);
-//          end;
-//          continue;
-//        end;
-//      end;
-//
-//      // Handle regular tables with path tracking
-//      if Pair.Value.ValueType = tvtTable then
-//      begin
-//        SubTable := Pair.Value.AsTable;
-//
-//        WriteLine;
-//
-//        // Build path components properly
-//        PathComponents := TStringList.Create;
-//        try
-//          // Add all current path components with proper quoting if needed
-//          for i := 0 to FCurrentPath.Count - 1 do
-//          begin
-//            Component := FCurrentPath[i];
-//            if NeedsQuoting(Component) then
-//              PathComponents.Add('"' + Component + '"')
-//            else
-//              PathComponents.Add(Component);
-//          end;
-//
-//          // Add the current key with proper quoting if needed
-//          if NeedsQuoting(Pair.Key) then
-//            PathComponents.Add('"' + Pair.Key + '"')
-//          else
-//            PathComponents.Add(Pair.Key);
-//
-//          // Join with dots to create the full path
-//          TablePath := '';
-//          for i := 0 to PathComponents.Count - 1 do
-//          begin
-//            if i > 0 then
-//              TablePath := TablePath + '.';
-//            TablePath := TablePath + PathComponents[i];
-//          end;
-//
-//          WriteLine('[' + TablePath + ']');
-//
-//          // Process the subtable recursively if it has items
-//          if SubTable.Items.Count > 0 then
-//          begin
-//            FCurrentPath.Add(Pair.Key);
-//            WriteTable(SubTable);
-//            FCurrentPath.Delete(FCurrentPath.Count - 1);
-//          end;
-//        finally
-//          PathComponents.Free;
-//        end;
-//      end;
-//    end;
-//  end;
-//end;
-
-
-procedure TTOMLSerializer.WriteTable(const ATable: TTOMLTable; const AInline: Boolean = False);
+procedure TTOMLSerializer.WriteTable(const ATable: TTOMLTable; const AInline: Boolean);
 var
   First: Boolean;
   SubTable: TTOMLTable;
@@ -756,19 +480,41 @@ var
   SortedKeys: TList<string>;
   K: string;
   V: TTOMLValue;
+  { 判断值是否为"数组表"（数组且所有元素均为 TVtTable） }
+
+  function IsArrayOfTables(Val: TTOMLValue): Boolean;
+  var
+    Arr: TTOMLArray;
+    j: Integer;
+  begin
+    Result := False;
+    if Val.ValueType = tvtArray then
+    begin
+      Arr := Val.AsArray;
+      if Arr.Count > 0 then
+      begin
+        Result := True;
+        for j := 0 to Arr.Count - 1 do
+          if Arr.GetItem(j).ValueType <> tvtTable then
+          begin
+            Result := False;
+            Break;
+          end;
+      end;
+    end;
+  end;
+
 begin
   if AInline then
   begin
-    // --- Inline table section ---
+    // ---- 内联表：{ key = value, ... } ----
     FStringBuilder.Append('{');
     First := True;
-
-    // Extract and sort the keys
     SortedKeys := TList<string>.Create;
     try
-      for K in ATable.Items.Keys do SortedKeys.Add(K);
+      for K in ATable.Items.Keys do
+        SortedKeys.Add(K);
       SortedKeys.Sort;
-
       for K in SortedKeys do
       begin
         V := ATable.Items[K];
@@ -776,7 +522,6 @@ begin
           FStringBuilder.Append(', ')
         else
           First := False;
-
         WriteKey(K);
         FStringBuilder.Append(' = ');
         WriteValue(V);
@@ -784,26 +529,23 @@ begin
     finally
       SortedKeys.Free;
     end;
-
     FStringBuilder.Append('}');
   end
   else
   begin
-    // --- Standard Table Section ---
+    // ---- 标准块表 ----
     SortedKeys := TList<string>.Create;
     try
-      // 1. Get all keys and sort them
-      for K in ATable.Items.Keys do SortedKeys.Add(K);
+      for K in ATable.Items.Keys do
+        SortedKeys.Add(K);
       SortedKeys.Sort;
 
-      // 2. First round of traversal: Write ordinary key-value pairs (not tables, not object arrays) first.
-      // According to the TOML specification, regular key-value pairs must be written before any subtable.
+      // 第一轮：输出所有普通键值对（非子表、非数组表）
+      // TOML 规范要求键值对必须出现在子表头部之前
       for K in SortedKeys do
       begin
         V := ATable.Items[K];
-        // Determine if an array is a sub-table or an array containing tables (these steps will be described later).
-        if not ((V.ValueType = tvtTable) or
-           ((V.ValueType = tvtArray) and (V.AsArray.Count > 0) and (V.AsArray.GetItem(0).ValueType = tvtTable))) then
+        if (V.ValueType <> tvtTable) and (not IsArrayOfTables(V)) then
         begin
           WriteKey(K);
           FStringBuilder.Append(' = ');
@@ -812,24 +554,22 @@ begin
         end;
       end;
 
-      // 3. Second round of traversal: Write to the array table [[key]] and the sub-table [key]
+      // 第二轮：输出数组表 [[key]] 和普通子表 [key]
       for K in SortedKeys do
       begin
         V := ATable.Items[K];
 
-        // Process the array of table
+        // 处理数组表 [[key]]
         if (V.ValueType = tvtArray) and (V.AsArray.Count > 0) then
         begin
           ArrayValue := V.AsArray;
           AllTables := True;
           for i := 0 to ArrayValue.Count - 1 do
-          begin
             if ArrayValue.GetItem(i).ValueType <> tvtTable then
             begin
               AllTables := False;
               Break;
             end;
-          end;
 
           if AllTables then
           begin
@@ -845,7 +585,7 @@ begin
           end;
         end;
 
-        // Processing regular sub-tables [table]
+        // 处理普通子表 [key]
         if V.ValueType = tvtTable then
         begin
           SubTable := V.AsTable;
@@ -868,9 +608,14 @@ end;
 function TTOMLSerializer.Serialize(const AValue: TTOMLValue): string;
 begin
   FStringBuilder.Clear;
-  WriteValue(AValue);
+  FCurrentPath.Clear;
+
+  if AValue.ValueType = tvtTable then
+    WriteTable(AValue.AsTable, False)
+  else
+    WriteValue(AValue);
+
   Result := FStringBuilder.ToString;
 end;
 
 end.
-
