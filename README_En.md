@@ -1,4 +1,4 @@
-# DelphiToml
+# DelphiTOML
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Delphi](https://img.shields.io/badge/Delphi2005%20and%20high-green.svg)](https://www.embarcadero.com/products/delphi/)
