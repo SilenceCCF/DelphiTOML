@@ -11,6 +11,16 @@ A unit for parsing the [TOML](https://toml.io/) version 1.1.0 format, rewritten 
 4. Floating-point and date data types are supported for output in raw precision format: RawString.
 5. With slight modifications, it can also support lower versions of Delphi and Free Pascal.
 6. Test unit usage: Compile the tomldecoder and TOMLEncoder units into exe files, and then download and run the [official test program](https://github.com/toml-lang/toml-test/releases):
+```
+toml-test.exe  test -decoder tomldecoder.exe -encoder TOMLEncoder.exe -toml 1.1.0 -v > results.txt
+```
+result：
+```
+toml-test v2.1.0 [.\tomldecoder.exe] [.\TOMLEncoder.exe]
+  valid tests: 214 passed,  0 failed
+encoder tests: 214 passed,  0 failed
+invalid tests: 466 passed,  0 failed
+```
 
 The following are the new methods compared to the original unit:
 - Read
