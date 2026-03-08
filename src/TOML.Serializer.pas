@@ -1,6 +1,6 @@
 (* TOML_Serializer.pas
   TOML 数据结构序列化单元。
-  本单元将 TOML 对象转换为符合 TOML v1.0.0 规范的文本格式，支持：
+  本单元将 TOML 对象转换为符合 TOML v1.1.0 规范的文本格式，支持：
     - 键值对（含键名自动引号与转义）
     - 普通表 [table] 和数组表 [[array]]
     - 内联表 { key = value, ... }
