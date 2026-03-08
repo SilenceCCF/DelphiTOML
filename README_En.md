@@ -1,7 +1,7 @@
 # DelphiTOML
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Delphi](https://img.shields.io/badge/Delphi2005%20and%20high-green.svg)](https://www.embarcadero.com/products/delphi/)
+[![Delphi](https://img.shields.io/badge/Delphi10.3%20and%20high-green.svg)](https://www.embarcadero.com/products/delphi/)
 [![TOML](https://img.shields.io/badge/TOML-1.1.0-green.svg)](https://toml.io/)
 
 A unit for parsing the [TOML](https://toml.io/) version 1.1.0 format, rewritten from [ikelaiah's TOML Parser for Free Pascal](https://github.com/ikelaiah/toml-fp) version 1.0.3, compatible with Delphi 2005 and later, with significant revisions and enhancements.
