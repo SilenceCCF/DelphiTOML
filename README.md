@@ -14,6 +14,13 @@
 ```
 toml-test.exe  test -decoder tomldecoder.exe -encoder TOMLEncoder.exe -toml 1.1.0 -v > results.txt
 ```
+结果：
+```
+toml-test v2.1.0 [.\tomldecoder.exe] [.\TOMLEncoder.exe]
+  valid tests: 214 passed,  0 failed
+encoder tests: 214 passed,  0 failed
+invalid tests: 466 passed,  0 failed
+```
 
 以下是相比原单元，新增的方法：
 - 读取
