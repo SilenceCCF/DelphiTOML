@@ -1,12 +1,13 @@
-{ TOML_Types.pas
-  TOML 核心数据类型定义单元。
-  本单元定义了表示 TOML 数据结构所需的全部类型和类，包括：
-    - 基本类型（字符串、整数、浮点数、布尔值、日期时间）
-    - 复合类型（数组、表）
-    - 类型转换与校验
-    - TOML 数据结构的内存管理
+{ TOML.Types.pas
+  This unit defines the core data types and classes used to represent TOML data structures.
+  It provides a type-safe, object-oriented representation of TOML values including:
+  - Basic types (string, integer, float, boolean, datetime)
+  - Complex types (array, table)
+  - Type conversion and validation
+  - Memory management for TOML data structures
 
-  类型系统遵循 TOML v1.1.0 规范，通过运行时类型检查和显式类型转换保证类型安全。
+  The type system follows the TOML v1.1.0 specification and ensures type safety through
+  runtime checks and explicit type conversions.
 }
 unit TOML.Types;
 
@@ -16,50 +17,57 @@ uses
   SysUtils, Generics.Collections, strutils;
 
 type
-  { TOML 值类型枚举 —— 对应 TOML 规范中所有可能的数据类型 }
+  { TOML value types - represents all possible TOML data types
+    These types correspond directly to the TOML specification types }
   TTOMLValueType = (
-    tvtString,      // 字符串（基本字符串和字面量字符串）
-    tvtInteger,     // 整数（十进制、十六进制、八进制、二进制）
-    tvtFloat,       // 浮点数（含指数表示法）
-    tvtBoolean,     // 布尔值（true / false）
-    tvtDateTime,    // 日期时间（RFC 3339）
-    tvtArray,       // 数组（有序值列表）
-    tvtTable,       // 表（键值对集合）
-    tvtInlineTable  // 内联表（紧凑格式的表）
+    tvtString,      // String value type (basic and literal strings)
+    tvtInteger,     // Integer value type (decimal, hex, octal, binary)
+    tvtFloat,       // Float/decimal value type (including exponential notation)
+    tvtBoolean,     // Boolean value type (true/false)
+    tvtDateTime,    // Date/time value type (RFC 3339)
+    tvtArray,       // Array value type (ordered list of values)
+    tvtTable,       // Table value type (collection of key/value pairs)
+    tvtInlineTable  // Inline table value type (compact table representation)
   );
 
-  { TOML 日期时间子类型 —— 对应 TOML 1.0.0 规范中的四种日期时间形式 }
+  { TOML Date and Time Subtypes — Corresponding to the four date and
+    time formats in the TOML 1.1.0 specification. }
   TTOMLDateTimeKind = (
-    tdkOffsetDateTime,  // 带时区偏移的日期时间：1979-05-27T07:32:00Z 或 1979-05-27T00:32:00-07:00
-    tdkLocalDateTime,   // 本地日期时间：1979-05-27T07:32:00
-    tdkLocalDate,       // 本地日期：1979-05-27
-    tdkLocalTime        // 本地时间：07:32:00
+    tdkOffsetDateTime,  // Date and time with time zone offset：1979-05-27T07:32:00Z or 1979-05-27T00:32:00-07:00
+    tdkLocalDateTime,   // Local date and time：1979-05-27T07:32:00
+    tdkLocalDate,       // Local date：1979-05-27
+    tdkLocalTime        // Local time：07:32:00
   );
 
-  { 前向声明（相互依赖类型） }
+  { Forward declarations for interdependent types }
   TTOMLValue = class;
   TTOMLArray = class;
   TTOMLTable = class;
 
-  { TOML 异常基类 }
+  { Exception types for TOML parsing and handling }
+
+  { Base exception type for all TOML-related errors }
   ETOMLException = class(Exception);
-  { TOML 解析异常 }
+  { Exception type for TOML parsing errors }
   ETOMLParserException = class(ETOMLException);
-  { TOML 序列化异常 }
+  { Exception type for TOML serialization errors }
   ETOMLSerializerException = class(ETOMLException);
 
-  { TOML 表的键值字典，键为字符串，大小写敏感 }
+  { Generic dictionary type for TOML tables
+    Maps string keys to TOML values with case-sensitive comparison }
   TTOMLTableDict = TDictionary<string, TTOMLValue>;
-  { TOML 数组的值列表（有序） }
+  { Generic list type for TOML arrays
+    Stores ordered list of TOML values }
   TTOMLValueList = TList<TTOMLValue>;
 
-  { TOML 值基类 —— 所有 TOML 值类型的抽象基类，
-    提供公共接口和类型转换方法 }
+  { Base TOML value class - abstract base class for all TOML value types
+    Provides common functionality and type conversion methods }
   TTOMLValue = class
   private
     FValueType: TTOMLValueType;
   protected
-    { 子类按需重写以下类型转换方法，不支持时抛出 ETOMLException }
+    { Protected type conversion methods - override in derived classes
+      Each method raises ETOMLException if conversion is not supported }
     function GetAsString: string; virtual;
     function GetAsInteger: Int64; virtual;
     function GetAsFloat: Double; virtual;
@@ -68,14 +76,15 @@ type
     function GetAsArray: TTOMLArray; virtual;
     function GetAsTable: TTOMLTable; virtual;
   public
-    { 构造函数
-      @param AType 该 TOML 值的类型 }
+    { Creates a new TOML value with the specified type
+      @param AType The type of TOML value to create }
     constructor Create(AType: TTOMLValueType);
     destructor Destroy; override;
 
-    { 值的类型 }
+    { Type of value }
     property ValueType: TTOMLValueType read FValueType;
-    { 以下属性读取时若类型不符将抛出 ETOMLException }
+    { Properties for accessing the value in different formats
+      Each property will raise ETOMLException if conversion is not supported }
     property AsString: string read GetAsString;
     property AsInteger: Int64 read GetAsInteger;
     property AsFloat: Double read GetAsFloat;
@@ -85,7 +94,7 @@ type
     property AsTable: TTOMLTable read GetAsTable;
   end;
 
-  { TOML 字符串值（基本字符串或字面量字符串） }
+  { String value - represents a TOML string (basic or literal) }
   TTOMLString = class(TTOMLValue)
   private
     FValue: string;
@@ -96,34 +105,34 @@ type
     property Value: string read FValue write FValue;
   end;
 
-  { TOML 整数值（十进制、十六进制、八进制、二进制） }
+  { Integer value - represents a TOML integer (decimal, hex, octal, binary) }
   TTOMLInteger = class(TTOMLValue)
   private
     FValue: Int64;
   protected
     function GetAsInteger: Int64; override;
-    function GetAsFloat: Double; override;  // 允许隐式转换为浮点数
+    function GetAsFloat: Double; override;  // Allows conversion to float
   public
     constructor Create(const AValue: Int64);
     property Value: Int64 read FValue write FValue;
   end;
 
-  { TOML 浮点数值（含指数表示法、inf、nan） }
+  { TOML Floating-point values ​​(including exponentiation, inf, nan) }
   TTOMLFloat = class(TTOMLValue)
   private
     FValue: Double;
-    FRawString: string; // 保存原始文本表示，用于精确往返（round-trip）
+    FRawString: string; // Save the original text representation for precise round-trip accuracy.
   protected
     function GetAsFloat: Double; override;
   public
-    { @param AValue      双精度浮点值
-      @param ARawString  原始文本（可选，用于保持序列化精度） }
+    { @param AValue      Double-precision floating-point value
+      @param ARawString  Original text (optional, used to maintain serialization precision) }
     constructor Create(const AValue: Double; const ARawString: string = '');
     property Value: Double read FValue write FValue;
     property RawString: string read FRawString write FRawString;
   end;
 
-  { TOML 布尔值（true / false） }
+  { Boolean value - represents a TOML boolean (true/false) }
   TTOMLBoolean = class(TTOMLValue)
   private
     FValue: Boolean;
@@ -134,22 +143,23 @@ type
     property Value: Boolean read FValue write FValue;
   end;
 
-  { TOML 日期时间值（RFC 3339 格式），
-    支持带时区偏移的日期时间、本地日期时间、本地日期和本地时间四种子类型 }
+  { TOML date and time values ​​(RFC 3339 format).
+    Supports four subtypes: date and time with time zone offset,
+    local date and time, local date, and local time. }
   TTOMLDateTime = class(TTOMLValue)
   private
     FValue: TDateTime;
-    FRawString: string;        // 保存原始文本，确保序列化时格式精确还原
-    FKind: TTOMLDateTimeKind;  // 日期时间子类型
-    FTimeZoneOffset: Integer;  // 时区偏移（分钟），仅适用于 tdkOffsetDateTime
+    FRawString: string;        // Preserve the original text to ensure accurate format restoration during serialization.
+    FKind: TTOMLDateTimeKind;  // Datetime subtype
+    FTimeZoneOffset: Integer;  // Time zone offset (minutes) only applies to tdkOffsetDateTime
   protected
     function GetAsDateTime: TDateTime; override;
     function GetAsString: string; override;
   public
-    { @param ADateTime        TDateTime 值
-      @param ARawString       原始文本（可选，用于精确格式还原）
-      @param AKind            日期时间子类型（默认：带时区偏移）
-      @param ATimeZoneOffset  时区偏移（分钟，默认 0 = UTC） }
+    { @param ADateTime        TDateTime value
+      @param ARawString       Original text (optional, for precise formatting restoration)
+      @param AKind            Date and time subtype (default: with time zone offset)
+      @param ATimeZoneOffset  Time zone offset (minutes, default 0 = UTC) }
     constructor Create(const ADateTime: TDateTime; const ARawString: string = '';
       AKind: TTOMLDateTimeKind = tdkOffsetDateTime; ATimeZoneOffset: Integer = 0);
     property Value: TDateTime read FValue write FValue;
@@ -158,60 +168,73 @@ type
     property TimeZoneOffset: Integer read FTimeZoneOffset write FTimeZoneOffset;
   end;
 
-  { TOML 数组值（有序值列表，元素可为任意 TOML 类型） }
+  { Array value - represents a TOML array (ordered list of values) }
   TTOMLArray = class(TTOMLValue)
   private
     FItems: TTOMLValueList;
   protected
     function GetAsArray: TTOMLArray; override;
   public
+    { Creates a new empty TOML array }
     constructor Create;
     destructor Destroy; override;
 
-    { 向数组末尾追加一个值（数组取得该值的所有权）
-      @param AValue 要添加的 TOML 值 }
+    { Adds a value to the array
+      @param AValue The value to add
+      @note Takes ownership of the value }
     procedure Add(AValue: TTOMLValue);
 
-    { 获取指定位置的元素
-      @param Index 从零开始的索引
-      @raises EListError 若索引越界 }
+    { Gets an item at the specified index
+      @param Index The zero-based index
+      @returns The TOML value at the index
+      @raises EListError if index is out of bounds }
     function GetItem(Index: Integer): TTOMLValue;
 
-    { 返回数组元素数量 }
+    { Gets the number of items in the array
+      @returns The count of items }
     function GetCount: Integer;
 
+    { Properties for accessing array data }
     property Items: TTOMLValueList read FItems;
     property Count: Integer read GetCount;
   end;
 
-  { TOML 表值（键值对集合，键大小写敏感） }
+  { Table value - represents a TOML table (collection of key/value pairs) }
   TTOMLTable = class(TTOMLValue)
   private
     FItems: TTOMLTableDict;
-    FIsImplicit: Boolean; // True 表示该表由点号键路径隐式创建（如 a.b = 1 中的 a）
-    FIsInline: Boolean;   // True 表示该表由内联语法定义（如 a = { b = 1 }），不可通过表头扩展
+    { True: This indicates that the table was implicitly created
+      by a dot key path (such as 'a' in ab = 1).}
+    FIsImplicit: Boolean;
+    (* True: This indicates that the table is defined using inline syntax
+     (e.g., a = { b = 1 }) and cannot be expanded via a table header.*)
+    FIsInline: Boolean;
   protected
     function GetAsTable: TTOMLTable; override;
   public
+    { Creates a new empty TOML table }
     constructor Create;
     destructor Destroy; override;
 
-    { 向表中添加键值对（取得值的所有权）
-      @param AKey   键名
-      @param AValue 值
-      @raises ETOMLParserException 若键已存在 }
+    { Adds a key-value pair to the table
+      @param AKey The key for the value
+      @param AValue The value to add
+      @raises ETOMLParserException if the key already exists
+      @note Takes ownership of the value }
     procedure Add(const AKey: string; AValue: TTOMLValue);
 
-    { 按键查找值
-      @param AKey   要查找的键
-      @param AValue 输出参数，找到时返回对应值
-      @returns True 若键存在，否则 False }
+    { Tries to get a value by key
+      @param AKey The key to look up
+      @param AValue The found value (if successful)
+      @returns True if the key exists, False otherwise }
     function TryGetValue(const AKey: string; out AValue: TTOMLValue): Boolean;
 
     property Items: TTOMLTableDict read FItems;
-    { 是否为隐式创建的表（通过点号键路径自动生成） }
+    { Whether it's an implicitly created table
+      (automatically generated via dot key paths) }
     property IsImplicit: Boolean read FIsImplicit write FIsImplicit;
-    // 是否为内联表（通过 { } 语法定义，内容不可追加）
+    (* Whether it is an inline table (defined by { } syntax,
+     the content cannot be appended.) *)
     property IsInline: Boolean read FIsInline write FIsInline;
   end;
 
@@ -347,14 +370,14 @@ var
   Hours, Minutes: Integer;
   Sign: Char;
 begin
-  // 优先使用原始文本，保证序列化精确还原
+  // Use the original text first to ensure accurate serialization.
   if FRawString <> '' then
   begin
     Result := FRawString;
     Exit;
   end;
 
-  // 按日期时间子类型格式化输出
+  // Format the output by datetime subtype
   case FKind of
     tdkLocalDate:
       Result := FormatDateTime('yyyy-mm-dd', FValue);
