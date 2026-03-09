@@ -1,336 +1,335 @@
-{ TOML_Helper.pas
-  TOML 辅助扩展单元，通过类助手（Class Helper）为 TTOMLTable 和 TTOMLArray
-  提供更简洁、安全的读写 API。
+{ TOML.Helper.pas
+TOML auxiliary extension units, through class helpers,
+provide TTOMLLTable and TTOMLArray with...
+Provides a simpler and more secure read/write API.
 
-  主要功能：
-    - TTOMLTableHelper：表的读取（GetXxx / TryGetXxx）、写入（SetXxx）、
-      链式调用（Put）、文件操作（LoadFromFile / SaveToFile）、
-      键管理（HasKey / GetKeys / Remove / Clear / Clone / Count）
-      与 JSON 格式互转（SaveToJSONFile、SaveToJSON、LoadFromJSONFile、
-      LoadFromJson）
-    - TTOMLArrayHelper：数组元素的读取（GetXxx）、追加（AddXxx）、
-      遍历（ForEachTable）、移除（RemoveAt / Clear）等
+Main functions:
+- TTOMLTableHelper: Reading (GetXxx / TryGetXxx) and writing (SetXxx) tables.
+Chained calls (Put), file operations (LoadFromFile / SaveToFile),
+Key management (HasKey / GetKeys / Remove / Clear / Clone / Count)
+- TTOMLArrayHelper: Reads array elements (GetXxx) and appends them (AddXxx).
+Traversal (ForEachTable), removal (RemoveAt / Clear), etc.
 
-  全局工厂函数：
-    - NewTable / NewArray：创建空对象
-    - LoadTOML：从文件加载，出错返回 nil
-    - ParseTOML：从字符串解析，出错返回 nil
-    - TryParseTOML：从字符串解析，以 Boolean 返回结果
+Global factory function:
+- NewTable / NewArray: Create an empty object
+- LoadTOML: Loads from a file; returns nil on error.
+- ParseTOML: Parses a string, returns nil on error.
+- TryParseTOML: Parses a string and returns a Boolean result.
 
-  路径导航（内部辅助函数）：
-    - SplitPath：拆分带引号的点号路径（支持 "a"."b.c".d 格式）
-    - NavigateToTable：沿路径导航到目标表
-    - GetValueFromPath：沿路径取值
-    - SetValueAtPath：沿路径写值（不存在的中间层级会自动创建）
+Path navigation (internal helper function):
+- SplitPath: Splits paths enclosed in quotes and periods
+  (supports "a".bc".d format)
+- NavigateToTable: Navigate to the target table along the path.
+- GetValueFromPath: Retrieves the value along the path.
+- SetValueAtPath: Writes a value along the path
+  (intermediate levels that do not exist will be created automatically).
 }
 unit TOML.Helper;
 
 interface
 
 uses
-  SysUtils, Classes, Generics.Collections, TOML.Types, TOML.Parser, TOML.Serializer,
-  TOML.JSON;
+  SysUtils, Classes, Generics.Collections, TOML.Types, TOML.Parser, TOML.Serializer, TOML.JSON;
 
 type
-  { TOML 表助手 —— 为 TTOMLTable 附加便捷读写操作 }
+  { TOML Table Assistant – Adding convenient read and write operations to TTOMLTable }
   TTOMLTableHelper = class helper for TTOMLTable
   public
 
-    { ===== 读取方法 ===== }
+    { ===== Read method ===== }
 
-    { 读取字符串值，支持点号路径（如 "server.host"）
-      @param Key          键名或点号路径
-      @param DefaultValue 键不存在时返回的默认值
-      @returns 字符串值或默认值 }
+    { Read string values, supporting dotted paths (e.g., "server.host")
+      @param Key Key name or dotted path
+      @param DefaultValue The default value returned when the key does not exist.
+      @returns string value or default value }
     function GetStr(const Key: string; const DefaultValue: string = ''): string;
     function TryGetStr(const Key: string; out Value: string): Boolean;
 
-    { 读取整数值（支持点号路径） }
+    { Read integer values (supports dotted paths) }
     function GetInt(const Key: string; const DefaultValue: Int64 = 0): Int64;
     function TryGetInt(const Key: string; out Value: Integer): Boolean;
 
-    { 读取浮点数值（支持点号路径） }
+    { Read floating-point values (supports dot path) }
     function GetFloat(const Key: string; const DefaultValue: Double = 0.0): Double;
     function TryGetFloat(const Key: string; out Value: Double): Boolean;
 
-    { 读取浮点数原始文本（保留 TOML 文件中的精确表示，如 "3.14"、"6.626e-34"、"inf"）
-      与 GetFloat 的区别：GetFloat 返回转换后的 Double，可能因 IEEE 754 精度损失；
-      GetFloatValue 返回文件中的原始字符串，可安全用于显示或高精度场景。
-      @param DefaultValue 键不存在或不是浮点类型时返回的默认值 }
+    { Read the raw text of floating-point numbers (preserving the exact
+      representation in the TOML file, such as "3.14", "6.626e-34", "inf")
+      Difference from GetFloat: GetFloat returns the converted Double,
+      which may suffer from precision loss due to IEEE 754;
+      GetFloatValue returns the raw string from the file, which can be safely
+      used for display or high-precision scenarios. @param DefaultValue The default value returned when the key does not exist or is not a floating-point type. }
     function GetFloatValue(const Key: string; const DefaultValue: string = ''): string;
     function TryGetFloatValue(const Key: string; out Value: string): Boolean;
 
-    { 读取布尔值（支持点号路径） }
+    { Read Boolean values (supports dotted paths) }
     function GetBool(const Key: string; const DefaultValue: Boolean = False): Boolean;
     function TryGetBool(const Key: string; out Value: Boolean): Boolean;
 
-    { 读取日期时间值（返回 TDateTime） }
+    { Read date and time value (returns TDateTime) }
     function GetDateTime(const Key: string; const DefaultValue: TDateTime = 0): TDateTime;
     function TryGetDateTime(const Key: string; out Value: TDateTime): Boolean;
 
-    { 读取日期时间值（返回原始字符串，保持精确格式） }
+    { Read date and time values (returns the raw string, preserving the exact format) }
     function GetDateTimeValue(const Key: string; const DefaultValue: string = ''): string;
     function TryGetDateTimeValue(const Key: string; out Value: string): Boolean;
 
-    { 获取数组引用，不存在时返回 nil }
+    { Get array reference; return nil if it does not exist. }
     function GetArray(const Key: string): TTOMLArray;
     function TryGetArray(const Key: string; out Value: TTOMLArray): Boolean;
 
-    { 获取子表引用，不存在时返回 nil }
+    { Retrieves a reference to the sub-table; returns nil if it does not exist. }
     function GetTable(const Key: string): TTOMLTable;
     function TryGetTable(const Key: string; out Value: TTOMLTable): Boolean;
 
-    { 检查键是否存在（支持点号路径） }
+    { Check if the key exists (supports dotted paths) }
     function HasKey(const Key: string): Boolean;
 
-    { 获取所有键名
-      @param Keys      输出的键名列表（调用前不必清空，方法内部会清空）
-      @param Recursive 是否递归枚举子表的键（前缀为父键，如 "server.host"） }
+    { Get all key names
+      @param Keys The list of keys to be output (does not need to be cleared
+      before calling, it will be cleared inside the method).
+      @param Recursive Whether to recursively enumerate the keys of child tables
+      (prefixed with the parent key, such as "server.host") }
     procedure GetKeys(Keys: TStrings; Recursive: Boolean = False);
 
-    { ===== 写入方法（含覆盖控制） ===== }
+    { ===== Write methods (including overwrite control) ===== }
 
-    { 写入字符串值
-      @param Overwrite False 时若键已存在则跳过（不报错）
-      @returns True 若成功写入，False 若键已存在且 Overwrite=False }
-    function SetStr(const Key: string; const Value: string;
-      Overwrite: Boolean = True): Boolean;
+    { Write string value }
+    function SetStr(const Key: string; const Value: string; Overwrite: Boolean = True): Boolean;
 
-    { 写入整数值 }
-    function SetInt(const Key: string; const Value: Int64;
-      Overwrite: Boolean = True): Boolean;
+    { Write integer value }
+    function SetInt(const Key: string; const Value: Int64; Overwrite: Boolean = True): Boolean;
 
-    { 写入浮点数值 }
-    function SetFloat(const Key: string; const Value: Double;
-      Overwrite: Boolean = True): Boolean;
+    { Write float value }
+    function SetFloat(const Key: string; const Value: Double; Overwrite: Boolean = True): Boolean;
 
-    { 写入浮点数原始文本（直接存储指定的字符串表示，不做 Double 转换）
-      适用于需要精确控制 TOML 输出格式的场景，如保留 "6.626e-34"、"inf"、"nan"。
-      @param RawValue  原始文本，须为合法的 TOML 浮点数表示
-      @returns True 若成功写入，False 若键已存在且 Overwrite=False }
-    function SetFloatValue(const Key: string; const RawValue: string;
-      Overwrite: Boolean = True): Boolean;
+    { Writes the raw text of the floating-point number (directly stores the specified string
+      representation without Double conversion).
+      Suitable for scenarios that require precise control over the TOML output format, such as
+      retaining "6.626e-34", "inf", and "nan".
+      @param RawValue The raw text, which must be a valid TOML floating-point number representation.
+      @returns True: If the write is successful，False: If the key already exists and Overwrite=False }
+    function SetFloatValue(const Key: string; const RawValue: string; Overwrite: Boolean = True): Boolean;
 
-    { 写入布尔值 }
-    function SetBool(const Key: string; const Value: Boolean;
-      Overwrite: Boolean = True): Boolean;
+    { Write Boolean value }
+    function SetBool(const Key: string; const Value: Boolean; Overwrite: Boolean = True): Boolean;
 
-    { 写入日期时间值 }
-    function SetDateTime(const Key: string; const Value: TDateTime;
-      Overwrite: Boolean = True): Boolean;
+    { Write DateTime value }
+    function SetDateTime(const Key: string; const Value: TDateTime; Overwrite: Boolean = True): Boolean;
 
-    { 写入日期时间原始文本（直接存储指定的字符串表示，不做 TDateTime 转换）
-      原始文本须符合 TOML 1.0.0 规范，支持以下四种形式：
-        "1979-05-27T07:32:00Z"          带时区偏移的日期时间
-        "1979-05-27T07:32:00.999999"    本地日期时间（含小数秒）
-        "1979-05-27"                    本地日期
-        "07:32:00"                      本地时间
-      格式由 TOML 解析器负责校验，格式非法时返回 False。
-      @param RawValue  原始文本，须为合法的 TOML 日期时间字面量
-      @returns True 若成功写入，False 若格式非法或键已存在且 Overwrite=False }
-    function SetDateTimeValue(const Key: string; const RawValue: string;
-      Overwrite: Boolean = True): Boolean;
+    { Write the raw text of the date and time (directly store the specified string representation
+      without TDateTime conversion).
+      The original text must conform to the TOML 1.1.0 specification
+      and supports the following four formats (Seconds can be omitted):
+        "1979-05-27T07:32:00Z"          Date and time with time zone offset
+        "1979-05-27T07:32:00.999999"    Local date and time (including decimal seconds)
+        "1979-05-27"                    Local date
+        "07:32:00"                      Local time
+      Returns False if the format is invalid.
+      @param RawValue: The original text must be a valid TOML date and time literal.
+      @returns True: If successful write; False: If the format is invalid or the key already exists and Overwrite=False }
+    function SetDateTimeValue(const Key: string; const RawValue: string; Overwrite: Boolean = True): Boolean;
 
-    { 写入数组（成功时转移所有权，失败时调用方保留所有权）
-      @returns True 若成功，False 若键已存在且 Overwrite=False }
-    function SetArray(const Key: string; Value: TTOMLArray;
-      Overwrite: Boolean = True): Boolean;
+    { Write to an array (ownership is transferred on success, and the caller retains ownership on failure).
+      @returns True: If successful write; False: If the key already exists and Overwrite=False }
+    function SetArray(const Key: string; Value: TTOMLArray; Overwrite: Boolean = True): Boolean;
 
-    { 写入子表（成功时转移所有权，失败时调用方保留所有权） }
-    function SetTable(const Key: string; Value: TTOMLTable;
-      Overwrite: Boolean = True): Boolean;
+    { Write to the sub-table (ownership transferred on success, ownership retained by the caller on failure) }
+    function SetTable(const Key: string; Value: TTOMLTable; Overwrite: Boolean = True): Boolean;
 
-    { ===== 链式写入（Builder 模式） ===== }
+    { ===== Chained write (Builder pattern) ===== }
 
-    { 链式写入字符串，返回 Self 以支持连续调用 }
-    function Put(const Key: string; const Value: string;
-      Overwrite: Boolean = True): TTOMLTable; overload;
-    function Put(const Key: string; const Value: Int64;
-      Overwrite: Boolean = True): TTOMLTable; overload;
-    function Put(const Key: string; const Value: Integer;
-      Overwrite: Boolean = True): TTOMLTable; overload;
-    function Put(const Key: string; const Value: Double;
-      Overwrite: Boolean = True): TTOMLTable; overload;
-    function Put(const Key: string; const Value: Boolean;
-      Overwrite: Boolean = True): TTOMLTable; overload;
-    function Put(const Key: string; const Value: TDateTime;
-      Overwrite: Boolean = True): TTOMLTable; overload;
-    function Put(const Key: string; Value: TTOMLArray;
-      Overwrite: Boolean = True): TTOMLTable; overload;
-    function Put(const Key: string; Value: TTOMLTable;
-      Overwrite: Boolean = True): TTOMLTable; overload;
+    { Chained writing of strings, returning Self to support consecutive calls. }
+    function Put(const Key: string; const Value: string; Overwrite: Boolean = True): TTOMLTable; overload;
+    function Put(const Key: string; const Value: Int64; Overwrite: Boolean = True): TTOMLTable; overload;
+    function Put(const Key: string; const Value: Integer; Overwrite: Boolean = True): TTOMLTable; overload;
+    function Put(const Key: string; const Value: Double; Overwrite: Boolean = True): TTOMLTable; overload;
+    function Put(const Key: string; const Value: Boolean; Overwrite: Boolean = True): TTOMLTable; overload;
+    function Put(const Key: string; const Value: TDateTime; Overwrite: Boolean = True): TTOMLTable; overload;
+    function Put(const Key: string; Value: TTOMLArray; Overwrite: Boolean = True): TTOMLTable; overload;
+    function Put(const Key: string; Value: TTOMLTable; Overwrite: Boolean = True): TTOMLTable; overload;
 
-    { ===== 文件操作 ===== }
+    { ===== File operations ===== }
 
-    { 从文件加载 TOML 数据到本表
-      @param ClearExisting True 时先清空当前内容
-      @returns True 若成功，False 若出错 }
-    function LoadFromFile(const FileName: string;
-      ClearExisting: Boolean = True): Boolean;
+    { Load TOML data from a file into this table.
+      @param ClearExisting: If True, the current content will be cleared first.
+      @returns}
+    function LoadFromFile(const FileName: string; ClearExisting: Boolean = True): Boolean;
 
-    { 从字符串加载 TOML 数据到本表
-      @param ClearExisting True 时先清空当前内容
-      @returns True 若成功，False 若出错 }
-    function LoadFromString(const ATOML: string;
-      ClearExisting: Boolean = True): Boolean;
+    { Load TOML data from a string into this table.
+      @param ClearExisting: If True, the current content will be cleared first.
+      @returns True }
+    function LoadFromString(const ATOML: string; ClearExisting: Boolean = True): Boolean;
 
-    { 将本表序列化并保存到文件
-      @param WriteBOM 是否写入 UTF-8 BOM
-      @returns True 若成功，False 若出错 }
+    { Serialize this table and save it to a file.
+      @param WriteBOM: Whether to write to a UTF-8 BOM
+      @returns }
     function SaveToFile(const FileName: string; WriteBOM: Boolean = True): Boolean;
 
-    { ===== 序列化 ===== }
+    { ===== Serialization ===== }
 
-    { 将本表序列化为 TOML 字符串，出错时返回空字符串 }
+    { Serialize this table into a TOML string; return an empty string on error. }
     function toString: string; reintroduce;
 
-    { ===== 工具方法 ===== }
+    { ===== Tools and methods ===== }
 
-    { 删除指定键
-      @param FreeValue True 时同时释放对应的值对象
-      @returns True 若键存在并已删除，False 若键不存在 }
+    { Delete specified key
+      @param FreeValue: When True, the corresponding value object is also released.
+      @returns: True: If the key exists and has been deleted; False: If the key does not exist. }
     function Remove(const Key: string; FreeValue: Boolean = True): Boolean;
 
-    { 清空表中所有键值对
-      @param FreeValues True 时同时释放所有值对象 }
+    { Clear all key-value pairs in the table
+      @param FreeValues: When True, all value objects are released simultaneously. }
     procedure Clear(FreeValues: Boolean = True);
 
-    { 返回表中键值对数量 }
+    { Return the number of key-value pairs in the table. }
     function Count: Integer;
 
-    { 深度克隆本表（通过序列化再解析实现，出错返回 nil） }
+    { Deep clone this table (achieved through serialization and then parsing; returns nil on error). }
     function Clone: TTOMLTable;
 
-    { ===== JSON 互转 ===== }
+    { ===== TOML and JSON conversion ===== }
 
-    { 将本表序列化为 JSON 字符串
-      @param APretty     True 时输出带缩进的美观格式（默认 True）
-      @param AIndentSize 每级缩进空格数（默认 2）
-      @returns JSON 字符串；出错时返回空字符串 }
+    { Serialize this table into a JSON string.
+      @param APretty: Output beautiful format with indentation when true (default True)
+      @param AIndentSize: Number of spaces per indentation level (default 2)
+      @returns JSON string; returns an empty string on error. }
     function ToJSON(APretty: Boolean = True; AIndentSize: Integer = 2): string;
 
-    { 从 JSON 字符串加载数据（覆盖当前内容）
-      @param AJSON             合法的 JSON 对象字符串
-      @param ANullAsEmptyString True 时将 JSON null 写入为空字符串；
-                               False 时忽略 null 键（默认 False）
-      @returns True 若成功，False 若 JSON 格式非法 }
-    function LoadFromJSON(const AJSON: string;
-      ANullAsEmptyString: Boolean = False): Boolean;
+    { Load data from a JSON string (overwriting the current content).
+      @param AJSON              Valid JSON object string
+      @param ANullAsEmptyString When True, writes an empty string to the JSON null value.
+                                Ignore null keys when set to False (default is False)
+      @returns }
+    function LoadFromJSON(const AJSON: string; ANullAsEmptyString: Boolean = False): Boolean;
 
-    { 将本表序列化为 JSON 并写入文件
-      @param FileName    目标文件路径
-      @param APretty     是否美观缩进
-      @param ABOM        是否写入 UTF-8 BOM（JSON 文件通常不加 BOM）
-      @returns True 若成功，False 若出错 }
-    function SaveToJSONFile(const FileName: string;
-      APretty: Boolean = True; ABOM: Boolean = False): Boolean;
+    { Serialize this table into JSON and write it to a file.
+      @param FileName    Target file path
+      @param APretty     Whether to perform aesthetic indentation
+      @param ABOM        Whether to write a UTF-8 BOM (JSON files usually do not include a BOM)
+      @returns }
+    function SaveToJSONFile(const FileName: string; APretty: Boolean = True; ABOM: Boolean = False): Boolean;
 
-    { 从 JSON 文件加载数据（覆盖当前内容）
-      @param FileName          源 JSON 文件路径
-      @param ANullAsEmptyString null 处理策略（同 LoadFromJSON）
-      @returns True 若成功，False 若出错 }
-    function LoadFromJSONFile(const FileName: string;
-      ANullAsEmptyString: Boolean = False): Boolean;
+    { Load data from a JSON file (overwriting current content)
+      @param FileName           Source JSON file path
+      @param ANullAsEmptyString null handling strategy (same as LoadFromJSON)
+      @returns }
+    function LoadFromJSONFile(const FileName: string; ANullAsEmptyString: Boolean = False): Boolean;
   end;
 
-  { TOML 数组助手 —— 为 TTOMLArray 附加便捷读写操作 }
+  { TOML Array Helper – Adds convenient read and write operations to TTOMLArray }
   TTOMLArrayHelper = class helper for TTOMLArray
   public
 
-    { ===== 读取方法 ===== }
+    { ===== Read method ===== }
 
     function GetStr(Index: Integer; const DefaultValue: string = ''): string;
     function GetInt(Index: Integer; const DefaultValue: Int64 = 0): Int64;
     function GetFloat(Index: Integer; const DefaultValue: Double = 0.0): Double;
 
-    { 获取浮点数原始文本（保留 TOML 文件中的精确表示）
-      @param DefaultValue 索引越界或元素不是浮点类型时返回的默认值 }
+    { Get the raw text of floating-point numbers
+      (preserving the exact representation in the TOML file)
+      @param DefaultValue: The default value is returned
+       when the index is out of bounds or the element
+       is not a floating-point type. }
     function GetFloatValue(Index: Integer; const DefaultValue: string = ''): string;
 
     function GetBool(Index: Integer; const DefaultValue: Boolean = False): Boolean;
-
-    { 获取指定索引处的表元素，不存在或类型不符时返回 nil }
+    function GetDateTime(Index: Integer; const DefaultValue: TDateTime = 0): TDateTime;
+    function GetDateTimeValue(Index: Integer; const DefaultValue: string = ''): string;
+    { Retrieves the table element at the specified index;
+      returns nil if the element does not exist or its type does not match. }
     function GetTable(Index: Integer): TTOMLTable;
 
-    { 遍历数组中所有表类型的元素
-      @param Proc 对每个 TTOMLTable 执行的匿名过程 }
+    { Iterate through all table-type elements in the array
+      @param Proc: Anonymous procedure performed for each TTOMLTable }
     procedure ForEachTable(Proc: TProc<TTOMLTable>);
 
-    { ===== 追加方法（返回 Self 支持链式调用，出错返回 nil） ===== }
+    { == Add method (returns Self, supports chaining, returns nil on error) == }
 
     function AddStr(const Value: string): TTOMLArray;
     function AddInt(const Value: Int64): TTOMLArray;
     function AddFloat(const Value: Double): TTOMLArray;
 
-    { 追加浮点数原始文本（直接存储指定的字符串表示，适合精度敏感或特殊值场景）
-      @param RawValue 原始文本，须为合法的 TOML 浮点数表示（如 "6.626e-34"、"inf"） }
+    { Add raw text to floating-point numbers
+      (directly store the specified string representation,
+       suitable for precision-sensitive or special value scenarios).
+      @param RawValue: The original text must be a valid TOML floating-point
+       representation (such as "6.626e-34", "inf"). }
     function AddFloatValue(const RawValue: string): TTOMLArray;
 
     function AddBool(const Value: Boolean): TTOMLArray;
     function AddDateTime(const Value: TDateTime): TTOMLArray;
 
-    { 追加日期时间原始文本（直接存储指定的字符串表示，格式规则同 SetDateTimeValue）
-      格式非法时返回 nil，调用方可据此判断是否成功 }
+    { Add raw text of date and time
+     (directly store the specified string representation,
+      with the same formatting rules as SetDateTimeValue).
+      Returning nil when the format is invalid allows
+      the caller to determine whether the call was successful. }
     function AddDateTimeValue(const RawValue: string): TTOMLArray;
 
-    { 追加表元素（转移所有权）
-      @note 若返回 nil，调用方仍保有 Value 的所有权，需自行释放 }
+    { Add table element (transfer ownership)
+      @note If nil is returned, the caller retains ownership of Value
+       and must release it manually. }
     function AddTable(Value: TTOMLTable): TTOMLArray;
 
-    { 追加嵌套数组元素（转移所有权） }
+    { Add nested array elements (transfer ownership) }
     function AddArray(Value: TTOMLArray): TTOMLArray;
 
-    { ===== 序列化 ===== }
+    { ===== Serialization ===== }
 
-    { 将本数组序列化为 TOML 字符串，出错时返回空字符串 }
+    { Serialize this array into a TOML string; return an empty string on error.}
     function toString: string; reintroduce;
 
-    { ===== 工具方法 ===== }
+    { ===== Tool methods ===== }
 
-    { 清空数组中所有元素
-      @param FreeItems True 时同时释放所有元素对象 }
+    { Empty all elements in the array
+      @param FreeItems: True to release all element objects at the same time }
     procedure Clear(FreeItems: Boolean = True);
 
-    { 删除指定索引处的元素
-      @param FreeItem True 时同时释放被删除的元素对象
-      @returns True 若索引合法并已删除，False 若索引越界 }
+    { Delete elements at the specified index
+      @param FreeItem When True, the deleted element objects are also released.
+      @returns }
     function RemoveAt(Index: Integer; FreeItem: Boolean = True): Boolean;
 
-    { 安全获取指定索引处的元素
-      @param Value 输出参数，成功时返回对应元素
-      @returns True 若索引合法，否则 False }
+    { Securely retrieve the element at the specified index
+      @param Value: Output parameters, return the corresponding element on success.
+      @returns }
     function TryGetItem(Index: Integer; out Value: TTOMLValue): Boolean;
   end;
 
-{ ===== 全局工厂函数 ===== }
+{ ===== Global factory function ===== }
 
-{ 创建一个空 TOML 表 }
+{ Create an empty TOML table }
 function NewTable: TTOMLTable;
 
-{ 创建一个空 TOML 数组 }
+{ Create an empty TOML array }
 function NewArray: TTOMLArray;
 
-{ 从文件加载 TOML，出错时返回 nil（不抛异常） }
+{ Load TOML from file, return nil when error occurs (no exception thrown) }
 function LoadTOML(const FileName: string): TTOMLTable;
 
-{ 从字符串解析 TOML，出错时返回 nil（不抛异常） }
+{ Parse TOML from string, return nil on error (no exception thrown) }
 function ParseTOML(const ATOML: string): TTOMLTable;
 
-{ 从字符串解析 TOML
-  @param Config 成功时返回解析结果，失败时为 nil
-  @returns True 若解析成功，否则 False }
+{ Parsing TOML from a string
+  @param Config: Returns the parsing result on success, and nil on failure.
+  @returns }
 function TryParseTOML(const ATOML: string; out Config: TTOMLTable): Boolean;
 
-{ ===== 路径辅助函数（供内部使用，也可供外部调用） ===== }
+{ == Path helper functions (for internal use, but can also be called externally). == }
 
-{ 拆分带引号的点号路径，正确处理引号内的点号
-  示例：site."tt.com".owner -> ["site", "tt.com", "owner"] }
+{ Split the dot path with quotation marks and correctly handle the dots
+  within the quotation marks
+  Example：site."tt.com".owner -> ["site", "tt.com", "owner"] }
 function SplitPath(const Path: string): TArray<string>;
 
-{ 沿点号路径导航到目标表，不存在时返回 nil }
+{ Navigate to the target table along the dotted path;
+  return nil if the table does not exist. }
 function NavigateToTable(Root: TTOMLTable; const Path: string): TTOMLTable;
 
-{ 沿点号路径获取值，不存在时返回 nil }
+{ Retrieve the value along the dotted path;
+  return nil if the value does not exist. }
 function GetValueFromPath(Root: TTOMLTable; const Path: string): TTOMLValue;
 
 implementation
@@ -338,7 +337,7 @@ implementation
 uses
   StrUtils, Math;
 
-{ ===== 全局工厂函数实现 ===== }
+{ ===== Global factory function implementation ===== }
 
 function NewTable: TTOMLTable;
 begin
@@ -379,7 +378,7 @@ begin
   end;
 end;
 
-{ ===== 路径辅助函数实现 ===== }
+{ ===== Path helper function implementation ===== }
 
 function SplitPath(const Path: string): TArray<string>;
 var
@@ -389,14 +388,15 @@ var
   InBasic, InLiteral: Boolean;
   Ch: Char;
 begin
-  { 拆分点号路径，正确处理双引号和单引号包裹的段。
-    引号字符本身不包含在输出段中。
-    示例：site."tt.com".owner -> ["site", "tt.com", "owner"] }
+  { Split dotted paths and correctly handle segments enclosed
+    in double and single quotes.
+    The quotation mark character itself is not included in the output segment.
+    Example：site."tt.com".owner -> ["site", "tt.com", "owner"] }
   Parts := TList<string>.Create;
   try
-    Current    := '';
-    InBasic    := False;
-    InLiteral  := False;
+    Current := '';
+    InBasic := False;
+    InLiteral := False;
 
     for i := 1 to Length(Path) do
     begin
@@ -405,7 +405,7 @@ begin
       if (Ch = '"') and not InLiteral then
       begin
         InBasic := not InBasic;
-        Continue; // 不将引号加入当前段
+        Continue; // Do not add quotation marks to the current paragraph
       end;
 
       if (Ch = '''') and not InBasic then
@@ -441,9 +441,10 @@ var
   i: Integer;
 begin
   Result := nil;
-  if not Assigned(Root) then Exit;
+  if not Assigned(Root) then
+    Exit;
 
-  // 空路径直接返回根表
+  // An empty path directly returns the root table.
   if Path = '' then
   begin
     Result := Root;
@@ -451,21 +452,20 @@ begin
   end;
 
   try
-    Parts        := SplitPath(Path);
+    Parts := SplitPath(Path);
     CurrentTable := Root;
 
     for i := 0 to High(Parts) do
     begin
-      if not CurrentTable.TryGetValue(Parts[i], Value) then Exit;
+      if not CurrentTable.TryGetValue(Parts[i], Value) then
+        Exit;
 
       if Value is TTOMLTable then
         CurrentTable := TTOMLTable(Value)
       else if (Value is TTOMLArray) and (i < High(Parts)) then
       begin
-        // 数组类型：导航到最后一个表元素
         if TTOMLArray(Value).Count > 0 then
-          CurrentTable := TTOMLTable(TTOMLArray(Value).GetItem(
-                            TTOMLArray(Value).Count - 1))
+          CurrentTable := TTOMLTable(TTOMLArray(Value).GetItem(TTOMLArray(Value).Count - 1))
         else
           Exit;
       end
@@ -488,31 +488,26 @@ var
   CleanKey: string;
 begin
   Result := nil;
-  if not Assigned(Root) or (Path = '') then Exit;
-
-  // 整体被引号包裹时（如 "www.google.com"）直接查找去引号后的键
-  if (Length(Path) >= 2) and
-     (((Path[1] = '"')  and (Path[Length(Path)] = '"')) or
-      ((Path[1] = '''') and (Path[Length(Path)] = ''''))) then
+  if not Assigned(Root) or (Path = '') then
+    Exit;
+  if (Length(Path) >= 2) and (((Path[1] = '"') and (Path[Length(Path)] = '"')) or ((Path[1] = '''') and (Path[Length
+    (Path)] = ''''))) then
   begin
     CleanKey := Copy(Path, 2, Length(Path) - 2);
-    if Root.TryGetValue(CleanKey, Result) then Exit;
-    // 直接查找失败时继续尝试路径拆分
+    if Root.TryGetValue(CleanKey, Result) then
+      Exit;
   end;
 
   try
     Parts := SplitPath(Path);
-    if Length(Parts) = 0 then Exit;
-
+    if Length(Parts) = 0 then
+      Exit;
     CurrentTable := Root;
     for i := 0 to High(Parts) do
     begin
       CleanKey := Parts[i];
-
-      // 各段若被引号包裹则去除引号（如 site."google.com".url 中的 google.com）
-      if (Length(CleanKey) >= 2) and
-         (((CleanKey[1] = '"')  and (CleanKey[Length(CleanKey)] = '"')) or
-          ((CleanKey[1] = '''') and (CleanKey[Length(CleanKey)] = ''''))) then
+      if (Length(CleanKey) >= 2) and (((CleanKey[1] = '"') and (CleanKey[Length(CleanKey)] = '"')) or ((CleanKey
+        [1] = '''') and (CleanKey[Length(CleanKey)] = ''''))) then
         CleanKey := Copy(CleanKey, 2, Length(CleanKey) - 2);
 
       if not CurrentTable.TryGetValue(CleanKey, Val) then
@@ -520,20 +515,15 @@ begin
         Result := nil;
         Exit;
       end;
-
-      // 到达最终段，返回值
       if i = High(Parts) then
       begin
         Result := Val;
         Exit;
       end;
-
-      // 中间层级：继续向下导航
       if Val is TTOMLTable then
         CurrentTable := TTOMLTable(Val)
       else if (Val is TTOMLArray) and (TTOMLArray(Val).Count > 0) then
       begin
-        // 数组类型：导航到最后一个表元素
         Val := TTOMLArray(Val).GetItem(TTOMLArray(Val).Count - 1);
         if Val is TTOMLTable then
           CurrentTable := TTOMLTable(Val)
@@ -548,13 +538,15 @@ begin
   end;
 end;
 
-{ ===== 写路径辅助函数（内部使用） ===== }
+{ ===== Write path helper functions (for internal use) ===== }
 
-{ 沿 Parts[0..High-1] 导航（不存在的中间层级自动创建为表），
-  然后在 Parts[High] 处写入 NewValue。
-  成功返回 True；失败时 NewValue 不被释放，由调用方处理。 }
-function SetValueAtPath(Root: TTOMLTable; const Parts: TArray<string>;
-  NewValue: TTOMLValue; Overwrite: Boolean): Boolean;
+{ Navigate along Parts[0..High-1] (non-existent intermediate
+  levels are automatically created as tables).
+  Then write NewValue at Parts[High].
+  Returns True on success; on failure,
+  NewValue is not released and is handled by the caller. }
+function SetValueAtPath(Root: TTOMLTable; const Parts: TArray<string>; NewValue: TTOMLValue; Overwrite:
+  Boolean): Boolean;
 var
   CurrentTable: TTOMLTable;
   ExistingValue: TTOMLValue;
@@ -563,29 +555,24 @@ var
   i: Integer;
 begin
   Result := False;
-  if (Length(Parts) = 0) or not Assigned(Root) then Exit;
+  if (Length(Parts) = 0) or not Assigned(Root) then
+    Exit;
 
   CurrentTable := Root;
-
-  // 导航到倒数第二层
   for i := 0 to High(Parts) - 1 do
   begin
     if CurrentTable.Items.TryGetValue(Parts[i], ExistingValue) then
     begin
       if ExistingValue is TTOMLTable then
         CurrentTable := TTOMLTable(ExistingValue)
-      else if (ExistingValue is TTOMLArray) and
-              (TTOMLArray(ExistingValue).Count > 0) and
-              (TTOMLArray(ExistingValue).GetItem(
-                TTOMLArray(ExistingValue).Count - 1) is TTOMLTable) then
-        CurrentTable := TTOMLTable(TTOMLArray(ExistingValue).GetItem(
-                          TTOMLArray(ExistingValue).Count - 1))
+      else if (ExistingValue is TTOMLArray) and (TTOMLArray(ExistingValue).Count > 0) and (TTOMLArray(ExistingValue).GetItem
+        (TTOMLArray(ExistingValue).Count - 1) is TTOMLTable) then
+        CurrentTable := TTOMLTable(TTOMLArray(ExistingValue).GetItem(TTOMLArray(ExistingValue).Count - 1))
       else
-        Exit; // 路径中存在非表类型，无法继续导航
+        Exit;
     end
     else
     begin
-      // 中间层级不存在时自动创建
       NewTable := TTOMLTable.Create;
       try
         CurrentTable.Items.AddOrSetValue(Parts[i], NewTable);
@@ -601,18 +588,18 @@ begin
 
   if CurrentTable.Items.TryGetValue(LastKey, ExistingValue) then
   begin
-    if not Overwrite then Exit(False);
-    ExistingValue.Free; // 替换时释放旧值
+    if not Overwrite then
+      Exit(False);
+    ExistingValue.Free;
   end;
 
   CurrentTable.Items.AddOrSetValue(LastKey, NewValue);
   Result := True;
 end;
 
-{ ===== TTOMLTableHelper —— 读取方法实现 ===== }
+{ ===== TTOMLTableHelper —— Read method implementation ===== }
 
-function TTOMLTableHelper.GetStr(const Key: string;
-  const DefaultValue: string): string;
+function TTOMLTableHelper.GetStr(const Key: string; const DefaultValue: string): string;
 var
   Value: TTOMLValue;
 begin
@@ -627,22 +614,21 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetStr(const Key: string;
-  out Value: string): Boolean;
+function TTOMLTableHelper.TryGetStr(const Key: string; out Value: string): Boolean;
 var
   TOMLVal: TTOMLValue;
 begin
   try
     TOMLVal := GetValueFromPath(Self, Key);
-    Result  := Assigned(TOMLVal) and (TOMLVal is TTOMLString);
-    if Result then Value := TOMLVal.AsString;
+    Result := Assigned(TOMLVal) and (TOMLVal is TTOMLString);
+    if Result then
+      Value := TOMLVal.AsString;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.GetInt(const Key: string;
-  const DefaultValue: Int64): Int64;
+function TTOMLTableHelper.GetInt(const Key: string; const DefaultValue: Int64): Int64;
 var
   Value: TTOMLValue;
 begin
@@ -657,22 +643,21 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetInt(const Key: string;
-  out Value: Integer): Boolean;
+function TTOMLTableHelper.TryGetInt(const Key: string; out Value: Integer): Boolean;
 var
   TOMLVal: TTOMLValue;
 begin
   try
     TOMLVal := GetValueFromPath(Self, Key);
-    Result  := Assigned(TOMLVal) and (TOMLVal is TTOMLInteger);
-    if Result then Value := TOMLVal.AsInteger;
+    Result := Assigned(TOMLVal) and (TOMLVal is TTOMLInteger);
+    if Result then
+      Value := TOMLVal.AsInteger;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.GetFloat(const Key: string;
-  const DefaultValue: Double): Double;
+function TTOMLTableHelper.GetFloat(const Key: string; const DefaultValue: Double): Double;
 var
   Value: TTOMLValue;
 begin
@@ -683,7 +668,7 @@ begin
       if Value is TTOMLFloat then
         Result := Value.AsFloat
       else if Value is TTOMLInteger then
-        Result := Value.AsInteger // 允许整数隐式转换为浮点数
+        Result := Value.AsInteger
       else
         Result := DefaultValue;
     end
@@ -694,22 +679,21 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetFloat(const Key: string;
-  out Value: Double): Boolean;
+function TTOMLTableHelper.TryGetFloat(const Key: string; out Value: Double): Boolean;
 var
   TOMLVal: TTOMLValue;
 begin
   try
     TOMLVal := GetValueFromPath(Self, Key);
-    Result  := Assigned(TOMLVal) and (TOMLVal is TTOMLFloat);
-    if Result then Value := TOMLVal.AsFloat;
+    Result := Assigned(TOMLVal) and (TOMLVal is TTOMLFloat);
+    if Result then
+      Value := TOMLVal.AsFloat;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.GetFloatValue(const Key: string;
-  const DefaultValue: string): string;
+function TTOMLTableHelper.GetFloatValue(const Key: string; const DefaultValue: string): string;
 var
   Value: TTOMLValue;
 begin
@@ -724,22 +708,21 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetFloatValue(const Key: string;
-  out Value: string): Boolean;
+function TTOMLTableHelper.TryGetFloatValue(const Key: string; out Value: string): Boolean;
 var
   TOMLVal: TTOMLValue;
 begin
   try
     TOMLVal := GetValueFromPath(Self, Key);
-    Result  := Assigned(TOMLVal) and (TOMLVal is TTOMLFloat);
-    if Result then Value := TTOMLFloat(TOMLVal).RawString;
+    Result := Assigned(TOMLVal) and (TOMLVal is TTOMLFloat);
+    if Result then
+      Value := TTOMLFloat(TOMLVal).RawString;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.GetBool(const Key: string;
-  const DefaultValue: Boolean): Boolean;
+function TTOMLTableHelper.GetBool(const Key: string; const DefaultValue: Boolean): Boolean;
 var
   Value: TTOMLValue;
 begin
@@ -754,22 +737,21 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetBool(const Key: string;
-  out Value: Boolean): Boolean;
+function TTOMLTableHelper.TryGetBool(const Key: string; out Value: Boolean): Boolean;
 var
   TOMLVal: TTOMLValue;
 begin
   try
     TOMLVal := GetValueFromPath(Self, Key);
-    Result  := Assigned(TOMLVal) and (TOMLVal is TTOMLBoolean);
-    if Result then Value := TOMLVal.AsBoolean;
+    Result := Assigned(TOMLVal) and (TOMLVal is TTOMLBoolean);
+    if Result then
+      Value := TOMLVal.AsBoolean;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.GetDateTime(const Key: string;
-  const DefaultValue: TDateTime): TDateTime;
+function TTOMLTableHelper.GetDateTime(const Key: string; const DefaultValue: TDateTime): TDateTime;
 var
   Value: TTOMLValue;
 begin
@@ -784,22 +766,21 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetDateTime(const Key: string;
-  out Value: TDateTime): Boolean;
+function TTOMLTableHelper.TryGetDateTime(const Key: string; out Value: TDateTime): Boolean;
 var
   TOMLVal: TTOMLValue;
 begin
   try
     TOMLVal := GetValueFromPath(Self, Key);
-    Result  := Assigned(TOMLVal) and (TOMLVal is TTOMLDateTime);
-    if Result then Value := TOMLVal.AsDateTime;
+    Result := Assigned(TOMLVal) and (TOMLVal is TTOMLDateTime);
+    if Result then
+      Value := TOMLVal.AsDateTime;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.GetDateTimeValue(const Key: string;
-  const DefaultValue: string): string;
+function TTOMLTableHelper.GetDateTimeValue(const Key: string; const DefaultValue: string): string;
 var
   Value: TTOMLValue;
 begin
@@ -814,15 +795,15 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetDateTimeValue(const Key: string;
-  out Value: string): Boolean;
+function TTOMLTableHelper.TryGetDateTimeValue(const Key: string; out Value: string): Boolean;
 var
   TOMLVal: TTOMLValue;
 begin
   try
     TOMLVal := GetValueFromPath(Self, Key);
-    Result  := Assigned(TOMLVal) and (TOMLVal is TTOMLDateTime);
-    if Result then Value := TTOMLDateTime(TOMLVal).RawString;
+    Result := Assigned(TOMLVal) and (TOMLVal is TTOMLDateTime);
+    if Result then
+      Value := TTOMLDateTime(TOMLVal).RawString;
   except
     Result := False;
   end;
@@ -843,15 +824,15 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetArray(const Key: string;
-  out Value: TTOMLArray): Boolean;
+function TTOMLTableHelper.TryGetArray(const Key: string; out Value: TTOMLArray): Boolean;
 var
   TOMLVal: TTOMLValue;
 begin
   try
     TOMLVal := GetValueFromPath(Self, Key);
-    Result  := Assigned(TOMLVal) and (TOMLVal is TTOMLArray);
-    if Result then Value := TOMLVal.AsArray;
+    Result := Assigned(TOMLVal) and (TOMLVal is TTOMLArray);
+    if Result then
+      Value := TOMLVal.AsArray;
   except
     Result := False;
   end;
@@ -866,10 +847,9 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.TryGetTable(const Key: string;
-  out Value: TTOMLTable): Boolean;
+function TTOMLTableHelper.TryGetTable(const Key: string; out Value: TTOMLTable): Boolean;
 begin
-  Value  := NavigateToTable(Self, Key);
+  Value := NavigateToTable(Self, Key);
   Result := Assigned(Value);
 end;
 
@@ -878,7 +858,7 @@ var
   Value: TTOMLValue;
 begin
   try
-    Value  := GetValueFromPath(Self, Key);
+    Value := GetValueFromPath(Self, Key);
     Result := Assigned(Value);
   except
     Result := False;
@@ -892,7 +872,8 @@ var
   SubKeys: TStringList;
   i: Integer;
 begin
-  if not Assigned(Keys) then Exit;
+  if not Assigned(Keys) then
+    Exit;
   try
     Keys.Clear;
     for Pair in Self.Items do
@@ -901,7 +882,7 @@ begin
       if Recursive and (Pair.Value is TTOMLTable) then
       begin
         SubTable := TTOMLTable(Pair.Value);
-        SubKeys  := TStringList.Create;
+        SubKeys := TStringList.Create;
         try
           SubTable.GetKeys(SubKeys, True);
           for i := 0 to SubKeys.Count - 1 do
@@ -912,7 +893,7 @@ begin
       end;
     end;
   except
-    // 静默失败，保持接口健壮性
+    // Silent failure, maintaining interface robustness
   end;
 end;
 
@@ -920,69 +901,68 @@ function TTOMLTableHelper.Clone: TTOMLTable;
 var
   ATOML: string;
 begin
-  // 通过序列化再解析实现深度克隆
+  // Deep cloning achieved through serialization and re-parsing.
   try
-    ATOML  := Self.ToString;
+    ATOML := Self.ToString;
     Result := ParseTOML(ATOML);
   except
     Result := nil;
   end;
 end;
 
-{ ===== TTOMLTableHelper —— 写入方法实现 ===== }
+{ ===== TTOMLTableHelper —— Write method implementation ===== }
 
-function TTOMLTableHelper.SetStr(const Key: string; const Value: string;
-  Overwrite: Boolean): Boolean;
+function TTOMLTableHelper.SetStr(const Key: string; const Value: string; Overwrite: Boolean): Boolean;
 var
   NewValue: TTOMLString;
 begin
   try
     NewValue := TTOMLString.Create(Value);
-    Result   := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
-    if not Result then NewValue.Free;
+    Result := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
+    if not Result then
+      NewValue.Free;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.SetInt(const Key: string; const Value: Int64;
-  Overwrite: Boolean): Boolean;
+function TTOMLTableHelper.SetInt(const Key: string; const Value: Int64; Overwrite: Boolean): Boolean;
 var
   NewValue: TTOMLInteger;
 begin
   try
     NewValue := TTOMLInteger.Create(Value);
-    Result   := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
-    if not Result then NewValue.Free;
+    Result := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
+    if not Result then
+      NewValue.Free;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.SetFloat(const Key: string; const Value: Double;
-  Overwrite: Boolean): Boolean;
+function TTOMLTableHelper.SetFloat(const Key: string; const Value: Double; Overwrite: Boolean): Boolean;
 var
   NewValue: TTOMLFloat;
 begin
   try
     NewValue := TTOMLFloat.Create(Value);
-    Result   := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
-    if not Result then NewValue.Free;
+    Result := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
+    if not Result then
+      NewValue.Free;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.SetFloatValue(const Key: string;
-  const RawValue: string; Overwrite: Boolean): Boolean;
+function TTOMLTableHelper.SetFloatValue(const Key: string; const RawValue: string; Overwrite: Boolean): Boolean;
 var
   NewValue: TTOMLFloat;
-  FS:       TFormatSettings;
-  F:        Double;
+  FS: TFormatSettings;
+  F: Double;
 begin
-  { 将原始文本解析为 Double，同时保留文本本身，
-    使序列化时能精确还原 RawValue 中的格式。
-    特殊值 inf / +inf / -inf / nan 按 TOML 规范处理。 }
+  { Parse the original text into a Double while preserving the original text.
+    This ensures that the format in RawValue is accurately restored during serialization.
+    Special values ​​inf / +inf / -inf / nan are handled according to TOML specifications. }
   try
     FS := TFormatSettings.Invariant;
     if SameText(RawValue, 'inf') or SameText(RawValue, '+inf') then
@@ -992,98 +972,82 @@ begin
     else if SameText(RawValue, 'nan') then
       F := NaN
     else if not TryStrToFloat(RawValue, F, FS) then
-      raise ETOMLException.CreateFmt(
-        'SetFloatValue: "%s" is not a valid TOML float', [RawValue]);
+      raise ETOMLException.CreateFmt('SetFloatValue: "%s" is not a valid TOML float', [RawValue]);
 
     NewValue := TTOMLFloat.Create(F, RawValue);
-    Result   := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
-    if not Result then NewValue.Free;
+    Result := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
+    if not Result then
+      NewValue.Free;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.SetBool(const Key: string; const Value: Boolean;
-  Overwrite: Boolean): Boolean;
+function TTOMLTableHelper.SetBool(const Key: string; const Value: Boolean; Overwrite: Boolean): Boolean;
 var
   NewValue: TTOMLBoolean;
 begin
   try
     NewValue := TTOMLBoolean.Create(Value);
-    Result   := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
-    if not Result then NewValue.Free;
+    Result := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
+    if not Result then
+      NewValue.Free;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.SetDateTime(const Key: string;
-  const Value: TDateTime; Overwrite: Boolean): Boolean;
+function TTOMLTableHelper.SetDateTime(const Key: string; const Value: TDateTime; Overwrite: Boolean): Boolean;
 var
   NewValue: TTOMLDateTime;
 begin
   try
     NewValue := TTOMLDateTime.Create(Value);
-    Result   := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
-    if not Result then NewValue.Free;
+    Result := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
+    if not Result then
+      NewValue.Free;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.SetDateTimeValue(const Key: string;
-  const RawValue: string; Overwrite: Boolean): Boolean;
+function TTOMLTableHelper.SetDateTimeValue(const Key: string; const RawValue: string; Overwrite: Boolean): Boolean;
 var
-  Temp:     TTOMLTable;
-  RawVal:   TTOMLValue;
+  Temp: TTOMLTable;
+  RawVal: TTOMLValue;
   NewValue: TTOMLDateTime;
 begin
-  { 将原始文本包装为完整的 TOML 行，委托 Parser 完成格式校验和解析，
-    同时保留 RawString 以确保序列化时原样还原。 }
+  { The original text is wrapped into complete TOML lines,
+    and the Parser is delegated to perform format validation and parsing.
+    At the same time, retain the RawString to ensure that it is restored
+    exactly as it was during serialization. }
   try
     Temp := ParseTOMLString('__dt__ = ' + RawValue);
     try
       if not Temp.TryGetValue('__dt__', RawVal) then
         raise ETOMLParserException.Create('SetDateTimeValue: parse returned no value');
       if not (RawVal is TTOMLDateTime) then
-        raise ETOMLParserException.CreateFmt(
-          'SetDateTimeValue: "%s" is not a TOML datetime literal', [RawValue]);
+        raise ETOMLParserException.CreateFmt('SetDateTimeValue: "%s" is not a TOML datetime literal', [RawValue]);
 
-      // 克隆 TTOMLDateTime（Temp 即将释放，需转移出对象所有权）
-      NewValue := TTOMLDateTime.Create(
-        TTOMLDateTime(RawVal).Value,
-        RawValue,  // 始终用调用方传入的原始文本，保留其精确格式
-        TTOMLDateTime(RawVal).Kind,
-        TTOMLDateTime(RawVal).TimeZoneOffset);
+      NewValue := TTOMLDateTime.Create(TTOMLDateTime(RawVal).Value, RawValue,
+        TTOMLDateTime(RawVal).Kind, TTOMLDateTime(RawVal).TimeZoneOffset);
     finally
       Temp.Free;
     end;
 
     Result := SetValueAtPath(Self, SplitPath(Key), NewValue, Overwrite);
-    if not Result then NewValue.Free;
+    if not Result then
+      NewValue.Free;
   except
     Result := False;
   end;
 end;
 
-function TTOMLTableHelper.SetArray(const Key: string; Value: TTOMLArray;
-  Overwrite: Boolean): Boolean;
+function TTOMLTableHelper.SetArray(const Key: string; Value: TTOMLArray; Overwrite: Boolean): Boolean;
 begin
   Result := False;
-  if not Assigned(Value) then Exit;
-  try
-    // 失败时不释放 Value，所有权归调用方
-    Result := SetValueAtPath(Self, SplitPath(Key), Value, Overwrite);
-  except
-    Result := False;
-  end;
-end;
-
-function TTOMLTableHelper.SetTable(const Key: string; Value: TTOMLTable;
-  Overwrite: Boolean): Boolean;
-begin
-  Result := False;
-  if not Assigned(Value) then Exit;
+  if not Assigned(Value) then
+    Exit;
   try
     Result := SetValueAtPath(Self, SplitPath(Key), Value, Overwrite);
   except
@@ -1091,68 +1055,71 @@ begin
   end;
 end;
 
-{ ===== TTOMLTableHelper —— Builder 模式实现 ===== }
+function TTOMLTableHelper.SetTable(const Key: string; Value: TTOMLTable; Overwrite: Boolean): Boolean;
+begin
+  Result := False;
+  if not Assigned(Value) then
+    Exit;
+  try
+    Result := SetValueAtPath(Self, SplitPath(Key), Value, Overwrite);
+  except
+    Result := False;
+  end;
+end;
 
-function TTOMLTableHelper.Put(const Key: string; const Value: string;
-  Overwrite: Boolean): TTOMLTable;
+{ ===== TTOMLTableHelper —— Builder pattern implementation ===== }
+
+function TTOMLTableHelper.Put(const Key: string; const Value: string; Overwrite: Boolean): TTOMLTable;
 begin
   SetStr(Key, Value, Overwrite);
   Result := Self;
 end;
 
-function TTOMLTableHelper.Put(const Key: string; const Value: Int64;
-  Overwrite: Boolean): TTOMLTable;
+function TTOMLTableHelper.Put(const Key: string; const Value: Int64; Overwrite: Boolean): TTOMLTable;
 begin
   SetInt(Key, Value, Overwrite);
   Result := Self;
 end;
 
-function TTOMLTableHelper.Put(const Key: string; const Value: Integer;
-  Overwrite: Boolean): TTOMLTable;
+function TTOMLTableHelper.Put(const Key: string; const Value: Integer; Overwrite: Boolean): TTOMLTable;
 begin
   SetInt(Key, Value, Overwrite);
   Result := Self;
 end;
 
-function TTOMLTableHelper.Put(const Key: string; const Value: Double;
-  Overwrite: Boolean): TTOMLTable;
+function TTOMLTableHelper.Put(const Key: string; const Value: Double; Overwrite: Boolean): TTOMLTable;
 begin
   SetFloat(Key, Value, Overwrite);
   Result := Self;
 end;
 
-function TTOMLTableHelper.Put(const Key: string; const Value: Boolean;
-  Overwrite: Boolean): TTOMLTable;
+function TTOMLTableHelper.Put(const Key: string; const Value: Boolean; Overwrite: Boolean): TTOMLTable;
 begin
   SetBool(Key, Value, Overwrite);
   Result := Self;
 end;
 
-function TTOMLTableHelper.Put(const Key: string; const Value: TDateTime;
-  Overwrite: Boolean): TTOMLTable;
+function TTOMLTableHelper.Put(const Key: string; const Value: TDateTime; Overwrite: Boolean): TTOMLTable;
 begin
   SetDateTime(Key, Value, Overwrite);
   Result := Self;
 end;
 
-function TTOMLTableHelper.Put(const Key: string; Value: TTOMLArray;
-  Overwrite: Boolean): TTOMLTable;
+function TTOMLTableHelper.Put(const Key: string; Value: TTOMLArray; Overwrite: Boolean): TTOMLTable;
 begin
   SetArray(Key, Value, Overwrite);
   Result := Self;
 end;
 
-function TTOMLTableHelper.Put(const Key: string; Value: TTOMLTable;
-  Overwrite: Boolean): TTOMLTable;
+function TTOMLTableHelper.Put(const Key: string; Value: TTOMLTable; Overwrite: Boolean): TTOMLTable;
 begin
   SetTable(Key, Value, Overwrite);
   Result := Self;
 end;
 
-{ ===== TTOMLTableHelper —— 文件操作实现 ===== }
+{ ===== TTOMLTableHelper —— File operation implementation ===== }
 
-function TTOMLTableHelper.LoadFromFile(const FileName: string;
-  ClearExisting: Boolean): Boolean;
+function TTOMLTableHelper.LoadFromFile(const FileName: string; ClearExisting: Boolean): Boolean;
 var
   LoadedTable: TTOMLTable;
   Pair: TPair<string, TTOMLValue>;
@@ -1160,13 +1127,13 @@ begin
   Result := False;
   try
     LoadedTable := TOML.Parser.ParseTOMLFile(FileName);
-    if not Assigned(LoadedTable) then Exit;
+    if not Assigned(LoadedTable) then
+      Exit;
     try
-      if ClearExisting then Self.Clear(True);
-      // 将加载到的表中所有项转移到当前表
+      if ClearExisting then
+        Self.Clear(True);
       for Pair in LoadedTable.Items do
         Self.Items.Add(Pair.Key, Pair.Value);
-      // 清空字典（不释放值，值已转移）
       LoadedTable.Items.Clear;
       Result := True;
     finally
@@ -1177,8 +1144,7 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.LoadFromString(const ATOML: string;
-  ClearExisting: Boolean): Boolean;
+function TTOMLTableHelper.LoadFromString(const ATOML: string; ClearExisting: Boolean): Boolean;
 var
   LoadedTable: TTOMLTable;
   Pair: TPair<string, TTOMLValue>;
@@ -1186,9 +1152,11 @@ begin
   Result := False;
   try
     LoadedTable := TOML.Parser.ParseTOMLString(ATOML);
-    if not Assigned(LoadedTable) then Exit;
+    if not Assigned(LoadedTable) then
+      Exit;
     try
-      if ClearExisting then Self.Clear(True);
+      if ClearExisting then
+        Self.Clear(True);
       for Pair in LoadedTable.Items do
         Self.Items.Add(Pair.Key, Pair.Value);
       LoadedTable.Items.Clear;
@@ -1201,8 +1169,7 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.SaveToFile(const FileName: string;
-  WriteBOM: Boolean): Boolean;
+function TTOMLTableHelper.SaveToFile(const FileName: string; WriteBOM: Boolean): Boolean;
 begin
   try
     Result := TOML.Serializer.SerializeTOMLToFile(Self, FileName, WriteBOM);
@@ -1211,7 +1178,7 @@ begin
   end;
 end;
 
-{ ===== TTOMLTableHelper —— 序列化实现 ===== }
+{ ===== TTOMLTableHelper —— Serialization implementation ===== }
 
 function TTOMLTableHelper.toString: string;
 begin
@@ -1222,10 +1189,9 @@ begin
   end;
 end;
 
-{ ===== TTOMLTableHelper —— 工具方法实现 ===== }
+{ ===== TTOMLTableHelper —— Tool method implementation ===== }
 
-function TTOMLTableHelper.Remove(const Key: string;
-  FreeValue: Boolean): Boolean;
+function TTOMLTableHelper.Remove(const Key: string; FreeValue: Boolean): Boolean;
 var
   Value: TTOMLValue;
 begin
@@ -1233,7 +1199,8 @@ begin
     Result := Self.Items.TryGetValue(Key, Value);
     if Result then
     begin
-      if FreeValue and Assigned(Value) then Value.Free;
+      if FreeValue and Assigned(Value) then
+        Value.Free;
       Self.Items.Remove(Key);
     end;
   except
@@ -1248,10 +1215,11 @@ begin
   try
     if FreeValues then
       for Value in Self.Items.Values do
-        if Assigned(Value) then Value.Free;
+        if Assigned(Value) then
+          Value.Free;
     Self.Items.Clear;
   except
-    // 静默失败
+    // Silence on failure
   end;
 end;
 
@@ -1264,10 +1232,9 @@ begin
   end;
 end;
 
-{ ===== TTOMLArrayHelper —— 读取方法实现 ===== }
+{ ===== TTOMLArrayHelper —— Read method implementation ===== }
 
-function TTOMLArrayHelper.GetStr(Index: Integer;
-  const DefaultValue: string): string;
+function TTOMLArrayHelper.GetStr(Index: Integer; const DefaultValue: string): string;
 var
   Item: TTOMLValue;
 begin
@@ -1287,8 +1254,7 @@ begin
   end;
 end;
 
-function TTOMLArrayHelper.GetInt(Index: Integer;
-  const DefaultValue: Int64): Int64;
+function TTOMLArrayHelper.GetInt(Index: Integer; const DefaultValue: Int64): Int64;
 var
   Item: TTOMLValue;
 begin
@@ -1308,8 +1274,7 @@ begin
   end;
 end;
 
-function TTOMLArrayHelper.GetFloat(Index: Integer;
-  const DefaultValue: Double): Double;
+function TTOMLArrayHelper.GetFloat(Index: Integer; const DefaultValue: Double): Double;
 var
   Item: TTOMLValue;
 begin
@@ -1322,7 +1287,7 @@ begin
         if Item is TTOMLFloat then
           Result := Item.AsFloat
         else if Item is TTOMLInteger then
-          Result := Item.AsInteger // 允许整数隐式转换
+          Result := Item.AsInteger // Allow implicit integer conversion
         else
           Result := DefaultValue;
       end
@@ -1336,8 +1301,7 @@ begin
   end;
 end;
 
-function TTOMLArrayHelper.GetFloatValue(Index: Integer;
-  const DefaultValue: string): string;
+function TTOMLArrayHelper.GetFloatValue(Index: Integer; const DefaultValue: string): string;
 var
   Item: TTOMLValue;
 begin
@@ -1357,8 +1321,7 @@ begin
   end;
 end;
 
-function TTOMLArrayHelper.GetBool(Index: Integer;
-  const DefaultValue: Boolean): Boolean;
+function TTOMLArrayHelper.GetBool(Index: Integer; const DefaultValue: Boolean): Boolean;
 var
   Item: TTOMLValue;
 begin
@@ -1368,6 +1331,47 @@ begin
       Item := Self.GetItem(Index);
       if Assigned(Item) and (Item is TTOMLBoolean) then
         Result := Item.AsBoolean
+      else
+        Result := DefaultValue;
+    end
+    else
+      Result := DefaultValue;
+  except
+    Result := DefaultValue;
+  end;
+end;
+
+function TTOMLArrayHelper.GetDateTime(Index: Integer; const DefaultValue: TDateTime = 0): TDateTime;
+var
+  Item: TTOMLValue;
+begin
+  try
+    if (Index >= 0) and (Index < Self.Count) then
+    begin
+      Item := Self.GetItem(Index);
+      if Assigned(Item) and (Item is TTOMLDateTime) then
+        Result := Item.AsDateTime
+      else
+        Result := DefaultValue;
+    end
+    else
+      Result := DefaultValue;
+  except
+    Result := DefaultValue;
+  end;
+end;
+
+
+function TTOMLArrayHelper.GetDateTimeValue(Index: Integer; const DefaultValue: string = ''): string;
+var
+  Item: TTOMLValue;
+begin
+  try
+    if (Index >= 0) and (Index < Self.Count) then
+    begin
+      Item := Self.GetItem(Index);
+      if Assigned(Item) and (Item is TTOMLDateTime) then
+        Result := TTOMLDateTime(Item).RawString
       else
         Result := DefaultValue;
     end
@@ -1403,7 +1407,8 @@ var
   i: Integer;
   Item: TTOMLValue;
 begin
-  if not Assigned(Proc) then Exit;
+  if not Assigned(Proc) then
+    Exit;
   try
     for i := 0 to Self.Count - 1 do
     begin
@@ -1412,12 +1417,11 @@ begin
         Proc(TTOMLTable(Item));
     end;
   except
-    // 静默失败
+    // Silence on failure
   end;
 end;
 
-function TTOMLArrayHelper.TryGetItem(Index: Integer;
-  out Value: TTOMLValue): Boolean;
+function TTOMLArrayHelper.TryGetItem(Index: Integer; out Value: TTOMLValue): Boolean;
 begin
   try
     Result := (Index >= 0) and (Index < Self.Count);
@@ -1426,12 +1430,12 @@ begin
     else
       Value := nil;
   except
-    Value  := nil;
+    Value := nil;
     Result := False;
   end;
 end;
 
-{ ===== TTOMLArrayHelper —— 追加方法实现 ===== }
+{ ===== TTOMLArrayHelper —— Add method implementation ===== }
 
 function TTOMLArrayHelper.AddStr(const Value: string): TTOMLArray;
 var
@@ -1490,8 +1494,8 @@ end;
 function TTOMLArrayHelper.AddFloatValue(const RawValue: string): TTOMLArray;
 var
   NewValue: TTOMLFloat;
-  FS:       TFormatSettings;
-  F:        Double;
+  FS: TFormatSettings;
+  F: Double;
 begin
   Result := Self;
   try
@@ -1558,24 +1562,20 @@ end;
 
 function TTOMLArrayHelper.AddDateTimeValue(const RawValue: string): TTOMLArray;
 var
-  Temp:     TTOMLTable;
-  RawVal:   TTOMLValue;
+  Temp: TTOMLTable;
+  RawVal: TTOMLValue;
   NewValue: TTOMLDateTime;
 begin
   Result := Self;
   try
     Temp := ParseTOMLString('__dt__ = ' + RawValue);
     try
-      if not Temp.TryGetValue('__dt__', RawVal) or
-         not (RawVal is TTOMLDateTime) then
+      if not Temp.TryGetValue('__dt__', RawVal) or not (RawVal is TTOMLDateTime) then
       begin
         Result := nil;
         Exit;
       end;
-      NewValue := TTOMLDateTime.Create(
-        TTOMLDateTime(RawVal).Value,
-        RawValue,
-        TTOMLDateTime(RawVal).Kind,
+      NewValue := TTOMLDateTime.Create(TTOMLDateTime(RawVal).Value, RawValue, TTOMLDateTime(RawVal).Kind,
         TTOMLDateTime(RawVal).TimeZoneOffset);
     finally
       Temp.Free;
@@ -1595,7 +1595,8 @@ end;
 function TTOMLArrayHelper.AddTable(Value: TTOMLTable): TTOMLArray;
 begin
   Result := Self;
-  if not Assigned(Value) then Exit;
+  if not Assigned(Value) then
+    Exit;
   try
     Self.Add(Value);
   except
@@ -1606,7 +1607,8 @@ end;
 function TTOMLArrayHelper.AddArray(Value: TTOMLArray): TTOMLArray;
 begin
   Result := Self;
-  if not Assigned(Value) then Exit;
+  if not Assigned(Value) then
+    Exit;
   try
     Self.Add(Value);
   except
@@ -1614,7 +1616,7 @@ begin
   end;
 end;
 
-{ ===== TTOMLArrayHelper —— 序列化实现 ===== }
+{ ===== TTOMLArrayHelper —— Serialization implementation ===== }
 
 function TTOMLArrayHelper.toString: string;
 begin
@@ -1625,7 +1627,7 @@ begin
   end;
 end;
 
-{ ===== TTOMLArrayHelper —— 工具方法实现 ===== }
+{ ===== TTOMLArrayHelper —— Tool method implementation ===== }
 
 procedure TTOMLArrayHelper.Clear(FreeItems: Boolean);
 var
@@ -1634,15 +1636,15 @@ begin
   try
     if FreeItems then
       for Item in Self.Items do
-        if Assigned(Item) then Item.Free;
+        if Assigned(Item) then
+          Item.Free;
     Self.Items.Clear;
   except
-    // 静默失败
+    // Silence on failure
   end;
 end;
 
-function TTOMLArrayHelper.RemoveAt(Index: Integer;
-  FreeItem: Boolean): Boolean;
+function TTOMLArrayHelper.RemoveAt(Index: Integer; FreeItem: Boolean): Boolean;
 var
   Item: TTOMLValue;
 begin
@@ -1651,7 +1653,8 @@ begin
     if Result then
     begin
       Item := Self.Items[Index];
-      if FreeItem and Assigned(Item) then Item.Free;
+      if FreeItem and Assigned(Item) then
+        Item.Free;
       Self.Items.Delete(Index);
     end;
   except
@@ -1659,7 +1662,7 @@ begin
   end;
 end;
 
-{ ===== TTOMLTableHelper：JSON 互转方法实现 ===== }
+{ ===== TTOMLTableHelper：Implement the interconversion method with JSON ===== }
 
 function TTOMLTableHelper.ToJSON(APretty: Boolean; AIndentSize: Integer): string;
 begin
@@ -1670,36 +1673,32 @@ begin
   end;
 end;
 
-function TTOMLTableHelper.LoadFromJSON(const AJSON: string;
-  ANullAsEmptyString: Boolean): Boolean;
+function TTOMLTableHelper.LoadFromJSON(const AJSON: string; ANullAsEmptyString: Boolean): Boolean;
 var
   Parsed: TTOMLTable;
-  Pair:   TPair<string, TTOMLValue>;
+  Pair: TPair<string, TTOMLValue>;
 begin
   Result := False;
   try
     Parsed := JSONToTOML(AJSON, ANullAsEmptyString);
     try
-      // 清空当前表后逐对迁移（不能直接赋值，保留自身对象标识）
       Self.Clear(True);
       for Pair in Parsed.Items do
         Self.Add(Pair.Key, Pair.Value);
-      // 迁移完成后清空 Parsed 内部字典但不释放 Value（已转移所有权）
       Parsed.Items.Clear;
     finally
       Parsed.Free;
     end;
     Result := True;
   except
-    // 出错返回 False，Self 已被 Clear，保持空表状态
+    // Return False if an error occurs，Self has been cleared, so it remains an empty table.
   end;
 end;
 
-function TTOMLTableHelper.SaveToJSONFile(const FileName: string;
-  APretty: Boolean; ABOM: Boolean): Boolean;
+function TTOMLTableHelper.SaveToJSONFile(const FileName: string; APretty: Boolean; ABOM: Boolean): Boolean;
 var
   JSON: string;
-  SL:   TStringList;
+  SL: TStringList;
 begin
   Result := False;
   try
@@ -1713,14 +1712,13 @@ begin
       SL.Free;
     end;
   except
-    // 出错返回 False
+    // Return False if an error occurs
   end;
 end;
 
-function TTOMLTableHelper.LoadFromJSONFile(const FileName: string;
-  ANullAsEmptyString: Boolean): Boolean;
+function TTOMLTableHelper.LoadFromJSONFile(const FileName: string; ANullAsEmptyString: Boolean): Boolean;
 var
-  SL:   TStringList;
+  SL: TStringList;
   JSON: string;
 begin
   Result := False;
@@ -1734,7 +1732,7 @@ begin
     end;
     Result := LoadFromJSON(JSON, ANullAsEmptyString);
   except
-    // 出错返回 False
+    // Return False if an error occurs
   end;
 end;
 
