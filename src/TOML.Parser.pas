@@ -1,24 +1,24 @@
-(* TOML_Parser.pas
-  TOML 解析器单元（词法分析 + 语法分析）。
-  本单元实现了符合 TOML v1.1.0 规范的完整解析器，采用两阶段设计：
-    1. TTOMLLexer  —— 词法分析，将原始文本转换为 Token 序列
-    2. TTOMLParser —— 语法分析，将 Token 序列转换为 TOML 数据结构
-  支持的特性：
-    - 键值对（裸键、基本字符串键、字面量字符串键、点号键）
-    - 表 [table] 和数组表 [[array]]
-    - 内联表 { key = value, ... }
-    - 数组 [ ... ]（支持尾随逗号和多行格式）
-    - 基本字符串和字面量字符串（含多行形式）
-    - 十进制、十六进制（0x）、八进制（0o）、二进制（0b）整数
-    - 浮点数（含指数、inf、nan）
-    - 布尔值（true / false）
-    - 日期时间（带时区偏移、本地日期时间、本地日期、本地时间）
-  关键实现细节：
-    - 点号键中的各段使用 #31（ASCII Unit Separator）拼接，
-      避免与键名中合法的点号（如 "tt.com"）混淆
-    - 使用 IsImplicit 标记隐式创建的中间表，
-      区别于 [header] 显式定义的表
-    - 使用 IsInline 标记内联表，禁止后续通过表头扩展其内容
+(* TOML.Parser.pas
+TOML parser unit (lexical analysis + syntax analysis).
+This unit implements a complete parser conforming to the TOML v1.1.0 specification, using a two-stage design:
+1. TTOMLLexer — Lexical analysis that converts raw text into a sequence of tokens.
+2. TTOMLParser — Syntax analysis, converting token sequences into TOML data structures.
+Supported features:
+- Key-value pairs (bare keys, basic string keys, literal string keys, dot keys)
+- Tables and arrays
+- Inline table { key = value, ... }
+- Array [...] (supports trailing commas and multi-line formatting)
+- Basic strings and literal strings (including multi-line forms)
+- Decimal, hexadecimal (0x), octal (0o), binary (0b) integers
+- Floating-point numbers (including exponents, inf, nan)
+- Boolean value (true / false)
+- Date and time (with time zone offset, local date and time, local date, local time)
+Key implementation details:
+- The segments in the period key are concatenated using #31 (ASCII Unit Separator).
+Avoid confusion with valid dot characters in key names (such as "tt.com").
+- An intermediate table implicitly created using the IsImplicit flag.
+Unlike tables explicitly defined in [header]
+- Use the IsInline flag for inline tables to prevent subsequent expansion of their content via the table header.
 *)
 unit TOML.Parser;
 
@@ -27,155 +27,235 @@ interface
 uses
   SysUtils, Classes, TOML.Types, Generics.Collections, TypInfo, DateUtils, Math;
 {$IF CompilerVersion < 20.0}
+
 function CharInSet(C: Char; const CharSet: TSysCharSet): Boolean; inline;
 {$IFEND}
 
 type
-  { Token 类型，代表词法分析中的最小语义单元 }
-  TTokenType = (ttEOF,              // 文件结束
-    ttString,           // 字符串字面量（基本字符串或字面量字符串）
-    ttMultilineString,  // 多行字符串
-    ttInteger,          // 整数（十进制/十六进制/八进制/二进制）
-    ttFloat,            // 浮点数（含指数）
-    ttBoolean,          // 布尔值（true / false）
-    ttDateTime,         // 日期时间（RFC 3339）
-    ttEqual,            // 等号 =
-    ttDot,              // 点号 .（用于点号键）
-    ttComma,            // 逗号 ,
-    ttLBracket,         // 左方括号 [
-    ttRBracket,         // 右方括号 ]
-    ttLBrace,           // 左花括号 {
-    ttRBrace,           // 右花括号 }
-    ttNewLine,          // 换行符
-    ttWhitespace,       // 空白字符
-    ttComment,          // 注释（# 开头）
-    ttIdentifier        // 裸键标识符
+  { Token types used during lexical analysis
+    Each token represents a meaningful unit in the TOML syntax }
+  TTokenType = (ttEOF,              // End of file marker
+    ttString,           // String literal (basic or literal)
+    ttMultilineString,  // Multi-line string
+    ttInteger,          // Integer number (decimal, hex, octal, binary)
+    ttFloat,            // Floating point number (with optional exponent)）
+    ttBoolean,          // Boolean value (true/false)）
+    ttDateTime,         // Date/time value (RFC 3339)）
+    ttEqual,            // Equal sign (=)
+    ttDot,              // Dot for nested keys (.)
+    ttComma,            // Comma separator (,)
+    ttLBracket,         // Left bracket ([)
+    ttRBracket,         // Right bracket (])
+    ttLBrace,           // Left brace ({)
+    ttRBrace,           // Right brace (})
+    ttNewLine,          // Line break
+    ttWhitespace,       // Whitespace characters
+    ttComment,          // Comment (# or ##)）
+    ttIdentifier        // Key identifier
   );
-  { Token 记录，存储词法单元的完整信息 }
+  { Token record that stores lexical token information }
+
   TToken = record
-    TokenType: TTokenType;  // 类型
-    Value: string;          // 原始文本值
-    Line: Integer;          // 行号（从 1 开始）
-    Column: Integer;        // 列号（从 1 开始）
+    TokenType: TTokenType;  // Type of the token
+    Value: string;          // String value of the token
+    Line: Integer;          // Line number (1-based)）
+    Column: Integer;        // Column number (1-based)）
   end;
-  { 键值对类型（用于解析器内部传递） }
+  { Key-Value pair type for TOML tables） }
+
   TTOMLKeyValuePair = TPair<string, TTOMLValue>;
-  { TOML 词法分析器 —— 将原始 TOML 文本切分为 Token 序列 }
+  { Lexer class that performs lexical analysis of TOML input
+    Converts raw TOML text into a sequence of tokens }
+
   TTOMLLexer = class
   private
-    FInput: string;      // 输入文本
-    FPosition: Integer;  // 当前读取位置（1 起始）
-    FLine: Integer;      // 当前行号
-    FColumn: Integer;    // 当前列号
+    FInput: string;      // Input string to tokenize
+    FPosition: Integer;  // Current position in input）
+    FLine: Integer;      // Current line number (1-based)
+    FColumn: Integer;    // Current column number (1-based)
 
-    { 是否已到达输入末尾 }
+    { Checks if we've reached the end of input
+      @returns True if at end, False otherwise }
     function IsAtEnd: Boolean;
 
-    { 查看当前字符，不推进位置（末尾返回 #0） }
+    { Peeks at current character without advancing position
+      @returns Current character or #0 if at end }
     function Peek: Char;
 
-    { 查看下一个字符，不推进位置（末尾返回 #0） }
+    { Peeks at next character without advancing position
+      @returns Next character or #0 if at end }
     function PeekNext: Char;
 
-    { 消耗当前字符并推进位置（末尾返回 #0） }
+    { Advances position and returns current character
+      @returns Current character or #0 if at end }
     function Advance: Char;
 
-    { 跳过空格、Tab 及注释（不含换行符） }
+    { Skips whitespace and comments in the input }
     procedure SkipWhitespace;
 
-    { 扫描字符串 Token（单行或多行，基本或字面量）
-      @raises ETOMLParserException 若字符串格式非法 }
+    { Scans a string token (basic or literal)
+      @returns The scanned string token
+      @raises ETOMLParserException if string is malformed }
     function ScanString: TToken;
 
-    { 扫描数字 Token（整数或浮点数）
-      @raises ETOMLParserException 若数字格式非法 }
+    { Scans a number token (integer or float)
+      @returns The scanned number token
+      @raises ETOMLParserException if number is malformed }
     function ScanNumber: TToken;
 
-    { 扫描标识符 Token（裸键或 true / false） }
+    { Scans an identifier token
+      @returns The scanned identifier token }
     function ScanIdentifier: TToken;
 
-    { 扫描日期时间 Token（返回 ttDateTime 或回退到 ttInteger）
-      @raises ETOMLParserException 若日期时间格式非法 }
+    { Scans a datetime token
+      @returns The scanned datetime token
+      @raises ETOMLParserException if datetime is malformed }
     function ScanDateTime: TToken;
 
-    { 字符分类辅助函数 }
+    { Character classification helper functions }
+
+    { Checks if character is a digit (0-9)
+      @param C Character to check
+      @returns True if digit, False otherwise }
     function IsDigit(C: Char): Boolean;
+
+    { Checks if character is alphabetic (a-z, A-Z)
+    @param C Character to check
+    @returns True if alphabetic, False otherwise }
     function IsAlpha(C: Char): Boolean;
+
+    { Checks if character is alphanumeric (a-z, A-Z, 0-9)
+      @param C Character to check
+      @returns True if alphanumeric, False otherwise }
     function IsAlphaNumeric(C: Char): Boolean;
   public
-    { @param AInput 要词法分析的 TOML 文本 }
+    { Creates a new lexer instance
+      @param AInput The TOML input string to tokenize }
     constructor Create(const AInput: string);
 
-    { 返回下一个 Token
-      @raises ETOMLParserException 若遇到非法字符 }
+    { Gets the next token from input
+      @returns The next token
+      @raises ETOMLParserException if invalid input encountered }
     function NextToken: TToken;
   end;
-  { TOML 语法分析器 —— 将 Token 序列转换为 TOML 数据结构 }
+  { Parser class that performs syntactic analysis of TOML input
+    Converts tokens into TOML data structures }
+
   TTOMLParser = class
   private
-    FLexer: TTOMLLexer;       // 词法分析器实例
-    FCurrentToken: TToken;    // 当前 Token
-    FPeekedToken: TToken;     // 预读的下一个 Token
-    FHasPeeked: Boolean;      // 是否已预读
+    FLexer: TTOMLLexer;       // Lexer instance
+    FCurrentToken: TToken;    // Current token being processed
+    FPeekedToken: TToken;     // Next token (if peeked)
+    FHasPeeked: Boolean;      // Whether we have a peeked token
 
-    { 推进到下一个 Token }
+    { Advances to next token }
     procedure Advance;
 
-    { 预读下一个 Token（不消耗） }
+    { Peeks at next token without advancing
+      @returns The next token }
     function Peek: TToken;
 
-    { 若当前 Token 类型匹配则消耗并返回 True，否则返回 False }
+    { Checks if current token matches expected type
+      @param TokenType Expected token type
+      @returns True and advances if matches, False otherwise }
     function Match(TokenType: TTokenType): Boolean;
 
-    { 断言当前 Token 类型，不匹配则抛出异常并推进
-      @raises ETOMLParserException }
+    { Expects current token to be of specific type
+      @param TokenType Expected token type
+      @raises ETOMLParserException if token doesn't match }
     procedure Expect(TokenType: TTokenType);
 
-    { 各类 TOML 语法结构的解析方法 }
+    { Parsing methods for different TOML constructs }
+
+    { Parses a TOML value
+      @returns The parsed value
+      @raises ETOMLParserException on parse error }
     function ParseValue: TTOMLValue;
+
+    { Parses a string value
+      @returns The parsed string value
+      @raises ETOMLParserException on parse error }
     function ParseString: TTOMLString;
+
+    { Parses a number value (integer or float)
+      @returns The parsed number value
+      @raises ETOMLParserException on parse error }
     function ParseNumber: TTOMLValue;
+
+    { Parses a boolean value
+      @returns The parsed boolean value
+      @raises ETOMLParserException on parse error }
     function ParseBoolean: TTOMLBoolean;
+
+    { Parses a datetime value
+      @returns The parsed datetime value
+      @raises ETOMLParserException on parse error }
     function ParseDateTime: TTOMLDateTime;
+
+    { Parses an array value
+      @returns The parsed array value
+      @raises ETOMLParserException on parse error }
     function ParseArray: TTOMLArray;
+
+    { Parses an inline table value
+      @returns The parsed table value
+      @raises ETOMLParserException on parse error }
     function ParseInlineTable: TTOMLTable;
+
+    { Parses a key (bare or quoted)
+      @returns The parsed key string
+      @raises ETOMLParserException on parse error }
     function ParseKey: string;
 
-    { 将复合键字符串（以 #31 分隔各段）拆分为字符串数组 }
+    { Parses a key-value pair
+      @returns The parsed key-value pair
+      @raises ETOMLParserException on parse error }
+    function ParseKeyValue: TTOMLKeyValuePair;
+
     function SplitDottedKey(const CompositeKey: string): TArray<string>;
 
-    { 向路径列表追加一个键段，
-      若该段未加引号且含点号（Lexer 贪婪匹配为 ttFloat 所致）则进一步拆分 }
+    { Add a key field to the path list. If the segment is not enclosed
+      in quotes and contains a period (due to Lexer's greedy matching
+      using ttFloat), it will be further split. }
     procedure AddKeyToPath(Path: TList<string>; const Segment: string; WasQuoted: Boolean); overload;
     procedure AddKeyToPath(Path: TStrings; const Segment: string; WasQuoted: Boolean); overload;
 
-    { 按点号键路径逐级创建/导航表，并在最终位置写入值
-      @raises ETOMLParserException 若路径冲突或键重复定义 }
+    { Create/navigate tables level by level using the dot key path,
+      and write values ​​at the final positions. @raises ETOMLParserException
+      if there is a path conflict or a duplicate key definition. }
     procedure SetDottedKey(RootTable: TTOMLTable; const KeyParts: TArray<string>; Value: TTOMLValue);
 
-    { 解析一个键值对（key = value）
-      @returns 包含键和值的 TTOMLKeyValuePair }
-    function ParseKeyValue: TTOMLKeyValuePair;
 
-    { 校验当前 Token 必须是换行或 EOF，否则抛出异常；
-      若为换行则消耗之，为下一条语句做准备 }
+    { The current token must be a newline character or EOF; otherwise,
+      an exception will be thrown. If it's a newline character,
+      it's consumed to prepare for the next statement. }
     procedure ExpectNewLineOrEOF;
 
   public
-    { @param AInput 要解析的 TOML 文本 }
+    { Creates a new parser instance
+      @param AInput The TOML input string to parse }
     constructor Create(const AInput: string);
     destructor Destroy; override;
 
-    { 解析输入并返回根 TTOMLTable
-      @raises ETOMLParserException 若输入不合法 }
+    { Parses the input and returns a TOML table
+      @returns The parsed TOML table
+      @raises ETOMLParserException on parse error }
     function Parse: TTOMLTable;
   end;
-{ 将 TOML 字符串解析为表对象
-  @raises ETOMLParserException 若输入不合法 }
+
+{ Helper functions }
+
+{ Parses a TOML string into a table
+  @param ATOML The TOML string to parse
+  @returns The parsed TOML table
+  @raises ETOMLParserException on parse error }
 function ParseTOMLString(const ATOML: string): TTOMLTable;
-{ 从文件加载并解析 TOML 数据
-  @raises ETOMLParserException 若内容不合法
-  @raises EFileStreamError    若文件无法打开 }
+
+{ Parses a TOML file into a table
+  @param AFileName The file to parse
+  @returns The parsed TOML table
+  @raises ETOMLParserException on parse error
+  @raises EFileStreamError if file cannot be opened }
 function ParseTOMLFile(const AFileName: string): TTOMLTable;
 
 implementation
@@ -187,7 +267,7 @@ begin
 end;
 {$IFEND}
 
-{ 高层函数实现 }
+{ Helper functions }
 
 function ParseTOMLString(const ATOML: string): TTOMLTable;
 var
@@ -211,7 +291,7 @@ var
 begin
   Stream := TFileStream.Create(AFileName, fmOpenRead or fmShareDenyNone);
   try
-    // 读取前 3 字节以检测 BOM 编码标记
+    // Read the first 3 bytes to detect the BOM encoding mark.
     BytesRead := Stream.Read(BOM, 3);
     Stream.Position := 0;
 
@@ -222,7 +302,8 @@ begin
     else if (BytesRead >= 2) and (BOM[0] = $FE) and (BOM[1] = $FF) then
       Encoding := TEncoding.BigEndianUnicode
     else
-      // 无 BOM 时默认 UTF-8（TOML 规范要求）
+      // When there is no BOM, the default encoding is UTF-8
+      // (as required by the TOML specification).）
       Encoding := TEncoding.UTF8;
 
     StringList := TStringList.Create;
@@ -236,12 +317,12 @@ begin
     Stream.Free;
   end;
 end;
-{ TTOMLParser 辅助方法 }
+
+{ TTOMLParser Auxiliary methods }
 
 procedure TTOMLParser.ExpectNewLineOrEOF;
 begin
-  // 顶层表达式后只允许换行或文件结束
-  // （SkipWhitespace 已过滤空格和注释，Peek 到的只会是换行或新 Token）
+  // Only newline or end-of-file is allowed after the top-level expression.
   if not (FCurrentToken.TokenType in [ttNewLine, ttEOF]) then
     raise ETOMLParserException.CreateFmt('Only one expression allowed per line. Unexpected "%s" at line %d, column %d',
       [FCurrentToken.Value, FCurrentToken.Line, FCurrentToken.Column]);
@@ -307,17 +388,19 @@ begin
   begin
     case Peek of
       ' ', #9, #$FEFF:
-        // 空格、Tab 和 UTF-8 BOM 均视为空白
+        // Spaces, tabs, and UTF-8 BOMs are all considered blank.
         Advance;
       '#':
         begin
-          // 跳过注释内容直到行尾，同时检查非法控制字符
+          // Skip comments until the end of the line, while checking
+          // for illegal control characters.
           Advance; // 消耗 '#'
           while (not IsAtEnd) and (Peek <> #10) and (Peek <> #13) do
           begin
             Ch := Peek;
             OrdCh := Ord(Ch);
-            // 注释中不允许出现 U+0000-U+0008、U+000B-U+001F 和 U+007F
+            // The comments must not contain U+0000-U+0008, U+000B-U+001F,
+            // or U+007F.
             if (OrdCh <= 8) or ((OrdCh >= 11) and (OrdCh <= 31)) or (OrdCh = 127) then
               raise ETOMLParserException.CreateFmt('Control character U+%.4X is not allowed in comments', [OrdCh]);
             Advance;
@@ -360,15 +443,15 @@ begin
   IsMultiline := False;
   FoundClosing := False;
 
-  Advance; // 消耗开头引号
-
-  // 检测三重引号（多行字符串）
+  Advance;
+  // Detect triple quotes (multi-line strings)
   if (Peek = QuoteChar) and (PeekNext = QuoteChar) then
   begin
     IsMultiline := True;
     Advance;
     Advance;
-    // 多行字符串开头的第一个换行（如果紧跟）被忽略
+    // The first newline character at the beginning of a multi-line string
+    // (if immediately followed) is ignored.
     if (Peek = #13) or (Peek = #10) then
     begin
       if Peek = #13 then
@@ -385,12 +468,13 @@ begin
   TempValue := '';
   while not IsAtEnd do
   begin
-    // 1. 检测闭合定界符
+    // 1. Detecting closed delimiters
     if IsMultiline then
     begin
       if Peek = QuoteChar then
       begin
-        // 探测连续引号数量（TOML 允许在多行字符串内出现最多 2 个同类引号）
+        // Detect the number of consecutive quotation marks (TOML allows a
+        // maximum of 2 consecutive quotation marks within a multi-line string).
         QuoteCount := 0;
         LookPos := FPosition;
         while (LookPos <= Length(FInput)) and (FInput[LookPos] = QuoteChar) do
@@ -403,18 +487,18 @@ begin
         begin
           if QuoteCount <= 5 then
           begin
-            // 3–5 个引号：前 (QuoteCount-3) 个是内容，后 3 个是定界符
+            // 3–5 quotation marks: the first (QuoteCount-3) are the content,
+            // and the last 3 are delimiters.
             for j := 1 to QuoteCount - 3 do
               TempValue := TempValue + Advance;
             Advance;
             Advance;
-            Advance; // 消耗 3 个定界符
+            Advance;
             FoundClosing := True;
             Break;
           end
           else
           begin
-            // 6 个及以上：消耗前 3 个关闭字符串，其余留给 Parser 报错
             Advance;
             Advance;
             Advance;
@@ -431,10 +515,12 @@ begin
       Break;
     end;
 
-    // 2. 处理转义序列（仅适用于基本字符串，字面量字符串不转义）
+    // 2. Handling escape sequences (only applies to basic strings;
+    // literal strings are not escaped).
     if (not IsLiteral) and (Peek = '\') then
     begin
-      // 多行基本字符串中，行尾的 \ 用于忽略换行及后续空白
+      // In a multi-line basic string, the backslash (\) at the end
+      // of a line is used to ignore newlines and subsequent whitespace.
       if IsMultiline then
       begin
         var SlashPos := FPosition + 1;
@@ -452,26 +538,26 @@ begin
       Advance; // 消耗反斜杠
       case Peek of
         'b':
-          TempValue := TempValue + #8;    // 退格
+          TempValue := TempValue + #8;    // Backspace
         'f':
-          TempValue := TempValue + #12;   // 换页
+          TempValue := TempValue + #12;   // Page break
         'n':
-          TempValue := TempValue + #10;   // 换行
+          TempValue := TempValue + #10;   // Line break
         'r':
-          TempValue := TempValue + #13;   // 回车
+          TempValue := TempValue + #13;   // Return
         't':
-          TempValue := TempValue + #9;    // 制表符
+          TempValue := TempValue + #9;    // Tab
         '\':
           TempValue := TempValue + '\';
         '"':
           TempValue := TempValue + '"';
         '''':
-          TempValue := TempValue + ''''; // 允许转义单引号
+          TempValue := TempValue + '''';  // Allow escaped single quotes
         'e':
-          TempValue := TempValue + #27;   // ESC（TOML 1.1）
+          TempValue := TempValue + #27;   // ESC（TOML v1.1.0）
         'x':
           begin
-            // \xHH —— 2 位十六进制转义
+            // \xHH —— 2-digit hexadecimal escape sequence
             Advance;
             var HexStr := '';
             for j := 1 to 2 do
@@ -485,7 +571,7 @@ begin
           end;
         'u', 'U':
           begin
-            // \uHHHH 或 \UHHHHHHHH —— Unicode 转义
+            // \uHHHH 或 \UHHHHHHHH —— Unicode escape sequences
             var UChar := Peek;
             Advance;
             var HexLen := IfThen(UChar = 'U', 8, 4);
@@ -513,14 +599,14 @@ begin
       else
         raise ETOMLParserException.Create('Invalid escape sequence');
       end;
-      Advance; // 消耗被转义的字符（b/f/n/r/t/\/"/e 等）
+      Advance; // Consume escaped characters (b/f/n/r/t/\/"/e, etc.)）
     end
     else
     begin
-      // 3. 普通字符处理及非法控制字符检查
+      // 3. Ordinary character processing and illegal control character checking
       var Ch := Peek;
 
-      // 换行符处理
+      // Line break processing
       if (Ch = #10) or (Ch = #13) then
       begin
         if not IsMultiline then
@@ -528,21 +614,22 @@ begin
 
         if Ch = #13 then
         begin
-          Advance; // 消耗 CR
+          Advance;
           if Peek = #10 then
-            Advance // 消耗 LF
+            Advance
           else
             raise ETOMLParserException.Create('Bare CR is not allowed in multi-line strings');
         end
         else
-          Advance; // 消耗 LF
+          Advance;
 
-        // 多行字符串中的换行统一规范化为 LF
+        // Line breaks in multi-line strings are uniformly normalized as LF.
         TempValue := TempValue + #10;
       end
       else
       begin
-        // 其他控制字符检查：Tab（0x09）合法，其余 0x00-0x1F 和 0x7F 均非法
+        // Other control character checks: Tab (0x09) is valid, the rest
+        // (0x00-0x1F and 0x7F) are invalid.
         var OrdCh := Ord(Ch);
         if (OrdCh < 32) and (OrdCh <> 9) then
           raise ETOMLParserException.CreateFmt('Control character U+%.4X is not allowed', [OrdCh]);
@@ -573,7 +660,8 @@ var
   TempValue: string;
   Ch: Char;
   HasSign: Boolean;
-  { 消耗连续数字字符（AllowedDigits 指定合法字符集），含下划线分隔符检查 }
+  { Consumes consecutive numeric characters (AllowedDigits specifies the
+    valid character set), including underscore delimiter checking. }
 
   procedure ConsumeDigits(const AllowedDigits: TSysCharSet);
   begin
@@ -581,7 +669,8 @@ var
     begin
       if Peek = '_' then
       begin
-        // 下划线前后必须是合法数字（禁止在开头、结尾或连续使用）
+        { The underscore must be preceded and followed by valid numbers
+         (it is forbidden to use it at the beginning, end, or consecutively).}
         if (TempValue = '') or (not CharInSet(TempValue[Length(TempValue)], AllowedDigits)) then
           raise ETOMLParserException.Create('Invalid underscore placement');
         TempValue := TempValue + Advance;
@@ -599,14 +688,14 @@ begin
   StartColumn := FColumn;
   TempValue := '';
 
-  // 1. 处理正负号
+  // 1. Handle positive and negative signs
   if CharInSet(Peek, ['+', '-']) then
   begin
     HasSign := True;
     TempValue := TempValue + Advance;
   end;
 
-  // 2. 检测特殊浮点值 inf / nan（允许带符号）
+  // 2. Detect special floating-point values inf / nan (with symbols allowed.)
   if (Peek = 'i') or (Peek = 'n') then
   begin
     var StartLine := FLine;
@@ -628,7 +717,7 @@ begin
   // 3. 检测进制前缀 0x / 0o / 0b
   if (Peek = '0') and (not IsAtEnd) and CharInSet(PeekNext, ['x', 'o', 'b']) then
   begin
-    // 进制整数不允许带符号
+    // Integers in base 1 are not allowed to have signs.
     if HasSign then
       raise ETOMLParserException.Create('Signs are not allowed for hex, octal, or binary integers');
 
@@ -650,10 +739,11 @@ begin
     Exit;
   end;
 
-  // 4. 十进制整数部分
+  // 4. Decimal integer part
   ConsumeDigits(['0'..'9']);
 
-  // 5. 小数部分（. 后必须跟数字，否则不是浮点数）
+  // 5. The decimal part (a dot must be followed by a number;
+  // otherwise, it is not a floating-point number)
   if (Peek = '.') and IsDigit(PeekNext) then
   begin
     IsFloat := True;
@@ -661,7 +751,7 @@ begin
     ConsumeDigits(['0'..'9']);
   end;
 
-  // 6. 指数部分
+  // 6. Index section
   if CharInSet(Peek, ['e', 'E']) then
   begin
     IsFloat := True;
@@ -686,7 +776,7 @@ var
 begin
   StartColumn := FColumn;
   Result.Value := '';
-  // 裸键允许：字母、数字、下划线、连字符
+  // Bare keys allow: letters, numbers, underscores, hyphens
   while not IsAtEnd and (IsAlphaNumeric(Peek) or (Peek = '-')) do
     Result.Value := Result.Value + Advance;
 
@@ -702,8 +792,9 @@ var
   HasTimezone: Boolean;
   HasDate: Boolean;
   TempValue: string;
-  { 尝试扫描 Count 个连续数字，成功返回 True，失败返回 False }
 
+  { Attempt to scan Count consecutive numbers;
+    return True on success, False on failure. }
   function ScanDigits(Count: Integer): Boolean;
   var
     i: Integer;
@@ -729,7 +820,7 @@ begin
   HasTime := False;
   HasTimezone := False;
 
-  // 尝试解析日期部分 YYYY-MM-DD
+  // Attempting to parse the date portion: YYYY-MM-DD
   if ScanDigits(4) and (Peek = '-') then
   begin
     TempValue := TempValue + Advance; // '-'
@@ -741,7 +832,9 @@ begin
     end;
   end;
 
-  // 日期之后尝试解析时间部分（T 或空格分隔，空格需前瞻确认后续是 HH:MM 格式）
+  { After the date, attempt to parse the time portion
+   (separated by T or space; spaces require lookahead
+   confirmation that the following format is HH:MM). }
   if HasDate and ((UpCase(Peek) = 'T') or (Peek = ' ')) then
   begin
     var CanContinue := False;
@@ -749,7 +842,8 @@ begin
       CanContinue := True
     else if Peek = ' ' then
     begin
-      // 空格分隔：前瞻检查后续是否符合 HH:MM 格式
+      // Space-separated: Lookahead check to ensure subsequent
+      // elements conform to HH:MM format
       var NextPos := FPosition + 1;
       if NextPos + 4 <= Length(FInput) then
         CanContinue := IsDigit(FInput[NextPos]) and IsDigit(FInput[NextPos + 1]) and (FInput[NextPos + 2] =
@@ -758,20 +852,20 @@ begin
 
     if CanContinue then
     begin
-      TempValue := TempValue + Advance; // 消耗 'T' 或 ' '
+      TempValue := TempValue + Advance; // Consume 'T' or ' '
       if ScanDigits(2) and (Peek = ':') then
       begin
         TempValue := TempValue + Advance; // ':'
-        if ScanDigits(2) then             // 分钟（必须）
+        if ScanDigits(2) then             // Minutes (required)
         begin
           HasTime := True;
-          // 秒数可选
+          // Seconds are optional
           if Peek = ':' then
           begin
             TempValue := TempValue + Advance; // ':'
-            if ScanDigits(2) then            // 秒
+            if ScanDigits(2) then            // Secound
             begin
-              // 小数秒可选
+              // Decimal seconds selectable
               if Peek = '.' then
               begin
                 TempValue := TempValue + Advance; // '.'
@@ -786,7 +880,7 @@ begin
   end
   else if not HasDate then
   begin
-    // 无日期时尝试解析纯时间 HH:MM[:SS[.frac]]
+    // When no date is specified, attempt to parse pure time: HH:MM[:SS[.frac]]
     FPosition := StartPos;
     FLine := StartLine;
     FColumn := StartColumn;
@@ -815,7 +909,7 @@ begin
     end;
   end;
 
-  // 尝试解析时区部分（Z 或 +/-HH:MM）
+  // Attempt to resolve the time zone portion (Z or +/-HH:MM)）
   if HasTime and (CharInSet(UpCase(Peek), ['Z', '+', '-'])) then
   begin
     if UpCase(Peek) = 'Z' then
@@ -825,19 +919,17 @@ begin
     end
     else
     begin
-      // 尽可能多地消耗 [0-9:] 字符，格式校验留给 Parser
       TempValue := TempValue + Advance; // '+' 或 '-'
       while (not IsAtEnd) and CharInSet(Peek, ['0'..'9', ':']) do
         TempValue := TempValue + Advance;
-      // 注意：此处不设置 HasTimezone，格式合法性由 Parser 确认
     end;
   end;
 
-  // 根据解析结果确定 Token 类型
+  // Determine the Token type based on the parsing results.
   if HasDate or HasTime then
     Result.TokenType := ttDateTime
   else
-    Result.TokenType := ttInteger; // 回退：让 ScanNumber 重新处理
+    Result.TokenType := ttInteger; // Rollback: Let ScanNumber reprocess.
 
   Result.Value := TempValue;
   Result.Line := FLine;
@@ -905,7 +997,8 @@ begin
       end;
     #10, #13:
       begin
-        // 换行处理：统一将 CR+LF 和单独 LF 视为一个换行 Token
+        // Line break handling: CR+LF and a single LF are uniformly
+        // treated as a single line break token.
         if Peek = #13 then
         begin
           Advance;
@@ -923,7 +1016,8 @@ begin
       Exit(ScanString);
     '0'..'9':
       begin
-        // 优先尝试扫描日期时间，失败则回退扫描数字
+        // Try scanning the date and time first; if that fails,
+        // revert to scanning numbers.
         SavePos := FPosition;
         SaveLine := FLine;
         SaveCol := FColumn;
@@ -935,7 +1029,9 @@ begin
         FLine := SaveLine;
         FColumn := SaveCol;
         Result := ScanNumber;
-        // 若数字后紧跟字母或连字符，则整体视为标识符（如 2024-key 形式的裸键）
+        // If a number is immediately followed by a letter or hyphen,
+        // the entire key is treated as an identifier (e.g., a bare key
+        // in the form of a 2024-key).）
         if (not IsAtEnd) and (IsAlpha(Peek) or (Peek = '-')) then
         begin
           FPosition := SavePos;
@@ -947,7 +1043,8 @@ begin
       end;
     '+', '-':
       begin
-        // 优先尝试扫描带符号数字，若仅剩符号或后跟字母则视为标识符
+        // Prioritize scanning for signed numbers; if only a sign
+        // or a letter remains, treat it as an identifier.
         SavePos := FPosition;
         SaveLine := FLine;
         SaveCol := FColumn;
@@ -1074,7 +1171,7 @@ var
 begin
   RawValue := FCurrentToken.Value;
 
-  // 1. 处理特殊浮点值 inf / nan（含带符号形式）
+  // 1. Handling special floating-point values ​inf / nan (including signed form)
   if SameText(RawValue, 'inf') or SameText(RawValue, '+inf') or SameText(RawValue, '-inf') or SameText(RawValue,
     'nan') or SameText(RawValue, '+nan') or SameText(RawValue, '-nan') then
   begin
@@ -1089,7 +1186,8 @@ begin
     Exit;
   end;
 
-  // 2. 去掉下划线分隔符，得到用于解析的纯净数字字符串
+  // 2. Removing the underscore delimiter yields a clean string
+  // of numbers for parsing.
   CleanValue := '';
   for i := 1 to Length(RawValue) do
     if RawValue[i] <> '_' then
@@ -1099,18 +1197,18 @@ begin
   Code := 0;
   Result := nil;
 
-  // 3. 判断是否为十六进制 / 八进制 / 二进制整数
+  // 3. Determine if it is a hexadecimal/octal/binary integer.
   IsHexOctBin := (Length(CleanValue) >= 2) and (CleanValue[1] = '0') and CharInSet(CleanValue[2], ['x', 'o', 'b']);
 
   if IsHexOctBin then
   begin
     case UpCase(CleanValue[2]) of
-      'X': // 十六进制
+      'X': // hexadecimal
         begin
           BaseValue := '$' + Copy(CleanValue, 3, Length(CleanValue));
           Val(BaseValue, IntValue, Code);
         end;
-      'O': // 八进制
+      'O': // Octal
         begin
           BaseValue := Copy(CleanValue, 3, Length(CleanValue));
           IntValue := 0;
@@ -1128,7 +1226,7 @@ begin
               IntValue := (IntValue shl 3) or (Ord(BaseValue[i]) - Ord('0'));
             end;
         end;
-      'B': // 二进制
+      'B': // binary
         begin
           BaseValue := Copy(CleanValue, 3, Length(CleanValue));
           IntValue := 0;
@@ -1155,17 +1253,18 @@ begin
   end
   else
   begin
-    // 4. 十进制数字（整数或浮点数）
+    // 4. Decimal numbers (integers or floating-point numbers)
     SForCheck := CleanValue;
     if (Length(SForCheck) > 0) and CharInSet(SForCheck[1], ['+', '-']) then
       Delete(SForCheck, 1, 1);
 
-    // 十进制数值必须以数字字符开头（排除 -.123 或 .123 等非法格式）
+    // Decimal numbers must begin with a numeric character
+    // (excluding illegal formats such as -.123 or .123).
     if (Length(SForCheck) = 0) or (not CharInSet(SForCheck[1], ['0'..'9'])) then
       raise ETOMLParserException.CreateFmt('Numbers must have an integer part: %s at line %d', [RawValue,
         FCurrentToken.Line]);
 
-    // 禁止前导零（如 01、007）
+    // Leading zeros are prohibited (e.g., 01, 007).
     if (Length(SForCheck) > 1) and (SForCheck[1] = '0') and CharInSet(SForCheck[2], ['0'..'9']) then
       raise ETOMLParserException.CreateFmt('Leading zeros are not allowed in decimal integers: %s', [RawValue]);
 
@@ -1230,7 +1329,7 @@ begin
     MilliSecond := 0;
     P := 1;
 
-    // 解析日期部分 YYYY-MM-DD
+    // Parsing the date portion: YYYY-MM-DD
     if (Length(DateStr) >= 10) and (DateStr[5] = '-') and (DateStr[8] = '-') then
     begin
       Year := StrToInt(Copy(DateStr, 1, 4));
@@ -1244,7 +1343,8 @@ begin
       P := 11;
     end;
 
-    // 解析时间部分（T 或空格分隔，或无日期时直接解析）
+    // Parse the time portion (separated by T or space,
+    // or directly parse if there is no date).
     if (P <= Length(DateStr)) and ((UpCase(DateStr[P]) = 'T') or (DateStr[P] = ' ') or (not HasDate)) then
     begin
       HasSep := (UpCase(DateStr[P]) = 'T') or (DateStr[P] = ' ');
@@ -1262,7 +1362,7 @@ begin
         HasTime := True;
         P := P + 5;
 
-        // 秒数可选
+        // Seconds are optional
         if (P <= Length(DateStr)) and (DateStr[P] = ':') then
         begin
           Inc(P);
@@ -1270,7 +1370,7 @@ begin
           begin
             Second := StrToInt(Copy(DateStr, P, 2));
             P := P + 2;
-            // 小数秒可选
+            // Decimal seconds optional
             if (P <= Length(DateStr)) and (DateStr[P] = '.') then
             begin
               Inc(P);
@@ -1290,11 +1390,12 @@ begin
         end;
       end
       else if HasSep then
-        // 存在 T 或空格分隔符但后续不是合法时间格式，视为错误
+        // The presence of a 'T' or space separator followed by an invalid
+        // time format is considered an error.
         raise ETOMLParserException.Create('DateTime separator must be followed by valid time');
     end;
 
-    // 解析时区部分（Z 或 +/-HH:MM）
+    // Analyze the time zone portion (Z or +/-HH:MM)
     if P <= Length(DateStr) then
     begin
       if UpCase(DateStr[P]) = 'Z' then
@@ -1306,7 +1407,7 @@ begin
       else if (DateStr[P] = '+') or (DateStr[P] = '-') then
       begin
         var SignChar := DateStr[P];
-        // 时区偏移固定格式：[+-]HH:MM（6 个字符）
+        // Fixed time zone offset format: [+-]HH:MM (6 characters)
         if P + 5 <= Length(DateStr) then
         begin
           if DateStr[P + 3] <> ':' then
@@ -1333,11 +1434,11 @@ begin
       end;
     end;
 
-    // 字符串若有剩余未解析部分，则格式非法
+    // If a string contains any remaining unparsed parts, its format is invalid.
     if P <= Length(DateStr) then
       raise ETOMLParserException.CreateFmt('Malformed datetime trailing characters: "%s"', [Copy(DateStr, P, MaxInt)]);
 
-    // 确定日期时间子类型
+    // Determine date and time subtypes
     if HasDate and HasTime and HasTimezone then
       DateTimeKind := tdkOffsetDateTime
     else if HasDate and HasTime then
@@ -1349,7 +1450,7 @@ begin
     else
       raise ETOMLParserException.Create('Invalid datetime format');
 
-    // 构造 TDateTime 值
+    // Constructing TDateTime Values
     if HasDate then
       DT := EncodeDate(Year, Month, Day)
     else
@@ -1377,11 +1478,12 @@ begin
 
     while True do
     begin
-      // 跳过元素前的所有换行（TOML 允许数组跨行）
+      // Skip all newlines before elements
+      // (TOML allows arrays to span multiple lines).
       while Match(ttNewLine) do
         ;
 
-      // 处理空数组 [] 或末尾逗号后的 ]
+      // Handling empty arrays [] or ] after a comma at the end.
       if FCurrentToken.TokenType = ttRBracket then
         Break;
 
@@ -1390,14 +1492,15 @@ begin
       while Match(ttNewLine) do
         ;
 
-      // 无逗号则结束（允许单元素无尾随逗号）
+      // The text ends if there is no comma
+      // (single elements without a trailing comma are allowed).
       if not Match(ttComma) then
       begin
         while Match(ttNewLine) do
           ;
         Break;
       end;
-      // 有逗号则继续解析下一个元素
+      // If a comma is present, continue parsing the next element.
     end;
 
     Expect(ttRBracket);
@@ -1413,11 +1516,12 @@ var
   KeyParts: TArray<string>;
 begin
   Result := TTOMLTable.Create;
-  Result.IsInline := True; // 内联表不可通过表头扩展
+  Result.IsInline := True; // Inline tables cannot be expanded via table headers.
   try
     Expect(ttLBrace);
 
-    // 跳过可选的换行（TOML 1.1 允许内联表内换行）
+    // Skip optional line breaks
+    // (TOML 1.1.0 allows line breaks within inline tables)
     while FCurrentToken.TokenType = ttNewLine do
       Advance;
 
@@ -1431,7 +1535,8 @@ begin
 
         KeyPair := ParseKeyValue;
         try
-          // 含 #31 分隔符的复合键需要逐级导航
+          // Composite keys containing the #31 separator
+          // require navigation through the key levels.
           if (Pos(#31, KeyPair.Key) > 0) or (KeyPair.Key = #31) then
           begin
             KeyParts := SplitDottedKey(KeyPair.Key);
@@ -1475,13 +1580,14 @@ begin
   end
   else if (FCurrentToken.TokenType = ttInteger) or (FCurrentToken.TokenType = ttFloat) then
   begin
-    // 数字字面量可作为裸键（如 1 = "one"）
+    // Numeric literals can be used as raw keys (e.g., 1 = "one").
     Result := FCurrentToken.Value;
     Advance;
   end
   else if FCurrentToken.TokenType = ttDateTime then
   begin
-    // 类日期格式的裸键：仅允许 [A-Za-z0-9_-]，含 : T Z + . 等字符时必须加引号
+    // Raw keys for date-like formats: Only [A-Za-z0-9_-] are allowed.
+    // Characters containing TZ + . must be enclosed in quotes.
     for i := 1 to Length(FCurrentToken.Value) do
       if not CharInSet(FCurrentToken.Value[i], ['0'..'9', 'a'..'z', 'A'..'Z', '_', '-']) then
         raise ETOMLParserException.CreateFmt('Invalid character "%s" in bare key at line %d, column %d. ' +
@@ -1500,7 +1606,7 @@ function TTOMLParser.SplitDottedKey(const CompositeKey: string): TArray<string>;
 var
   i, Count, Start: Integer;
 begin
-  // 空字符串视为单键
+  // An empty string is treated as a single key.
   if CompositeKey = '' then
   begin
     SetLength(Result, 1);
@@ -1508,7 +1614,7 @@ begin
     Exit;
   end;
 
-  // 统计分隔符数量，确定结果数组大小
+  // Count the number of delimiters to determine the size of the result array.
   Count := 1;
   for i := 1 to Length(CompositeKey) do
     if CompositeKey[i] = #31 then
@@ -1516,7 +1622,8 @@ begin
 
   SetLength(Result, Count);
 
-  // 手动按 #31 切分，保留首尾和中间的空字符串
+  // Manually split the string using #31,
+  // keeping the first, last, and empty strings in between.
   Start := 1;
   Count := 0;
   for i := 1 to Length(CompositeKey) do
@@ -1534,7 +1641,9 @@ var
   SubParts: TArray<string>;
   j: Integer;
 begin
-  // 未加引号且含点号时（通常由 Lexer 贪婪扫描 ttFloat 产生）进一步拆分
+  // When the data is not enclosed in quotes and contains periods
+  // (usually generated by Lexer's greedy scan of ttFloat),
+  // further splitting is required.
   if (not WasQuoted) and (Pos('.', Segment) > 0) then
   begin
     SubParts := Segment.Split(['.']);
@@ -1579,7 +1688,7 @@ begin
   CurrentTable := RootTable;
   KeyPath := '';
 
-  // 1. 处理路径中间各层级（末尾键除外）
+  // 1. Process each level in the path (except for the last key).
   for i := 0 to High(KeyParts) - 1 do
   begin
     if i > 0 then
@@ -1592,11 +1701,12 @@ begin
     begin
       if ExistingValue is TTOMLTable then
       begin
-        // 内联表不可通过点号键扩展
+        // Inline tables cannot be expanded using the dot key.
         if TTOMLTable(ExistingValue).IsInline then
           raise ETOMLParserException.CreateFmt('Cannot extend inline table "%s"', [KeyParts[i]]);
 
-        // 已显式定义的表（如 [a]）不允许再通过 a.b = 1 追加内容
+        // Tables that have been explicitly defined (such as [a])
+        // are not allowed to have content appended using ab = 1.
         if not TTOMLTable(ExistingValue).IsImplicit then
           raise ETOMLParserException.CreateFmt('Cannot extend explicitly defined table "%s"', [KeyParts[i]]);
 
@@ -1608,7 +1718,8 @@ begin
     end
     else
     begin
-      // 路径不存在时创建隐式表，允许后续点号键继续导航
+      // An implicit table is created if the path does not exist,
+      // allowing subsequent dot keys to continue navigation.
       NewTable := TTOMLTable.Create;
       NewTable.IsImplicit := True;
       try
@@ -1621,7 +1732,7 @@ begin
     end;
   end;
 
-  // 2. 写入最终键值
+  // 2. Write the final key value
   LastKey := KeyParts[High(KeyParts)];
 
   if CurrentTable.TryGetValue(LastKey, ExistingValue) then
@@ -1649,10 +1760,13 @@ var
   i: Integer;
   IsQuoted: Boolean;
 begin
-  { 解析键值对。
-    键的各段由 ParseKey 单独获取（词法器已剥离引号，返回原始内容），
-    再以 #31（ASCII Unit Separator）拼接——这样键名中合法的点号
-    （如 "tt.com"）可完整保留。SplitDottedKey 用相同的 #31 定界符还原各段。 }
+  { Parse key-value pairs.
+    Each segment of the key is retrieved separately by ParseKey
+    (the lexer has removed the quotes and returned the original content).
+    Then concatenate with #31 (ASCII Unit Separator)
+    – this adds a valid dot to the key name.
+    (e.g., "tt.com") can be preserved intact.
+    SplitDottedKey restores each segment using the same #31 delimiter. }
   KeyParts := TList<string>.Create;
   try
     repeat
@@ -1681,8 +1795,8 @@ function TTOMLParser.Parse: TTOMLTable;
 var
   CurrentTable: TTOMLTable;
   TablePath: TStringList;
-  DefinedTables: TStringList;  // 已显式定义的 [table] 头部路径集合
-  DefinedArrays: TStringList;  // 已显式定义的 [[array]] 头部路径集合
+  DefinedTables: TStringList;  // The explicitly defined collection of [table] header paths
+  DefinedArrays: TStringList;  // The explicitly defined [[array]] header path collection
   i: Integer;
   Key: string;
   Value: TTOMLValue;
@@ -1690,9 +1804,9 @@ var
   IsArrayOfTables: Boolean;
   ArrayValue: TTOMLArray;
   NewTable: TTOMLTable;
-  HeaderKey: string; // 当前 [header] 的规范化点号路径（以 #31 分隔）
+  HeaderKey: string; // The current [header] normalized dot path (separated by #31)
 
-  { 将 TablePath 列表拼接为以 #31 分隔的路径字符串 }
+  { Concatenate the TablePath list into a path string separated by #31. }
 
   function TablePathToKey: string;
   var
@@ -1732,7 +1846,7 @@ begin
               var FirstBracket := FCurrentToken;
               Advance;
 
-              // 检测 [[array]] —— 第二个 [ 必须紧跟第一个 [
+              // Detecting [[array]] — the second [ must immediately follow the first [
               if FCurrentToken.TokenType = ttLBracket then
               begin
                 if (FCurrentToken.Line <> FirstBracket.Line) or (FCurrentToken.Column <> FirstBracket.Column + 1) then
@@ -1741,33 +1855,33 @@ begin
                 Advance;
               end;
 
-              // 解析表头路径
+              // Parse the header path
               TablePath.Clear;
               repeat
                 var IsQ := (FCurrentToken.TokenType = ttString);
                 AddKeyToPath(TablePath, ParseKey, IsQ);
               until not Match(ttDot);
 
-              // 解析结尾括号
+              // Parse the ending brackets
               var FirstClosing := FCurrentToken;
               Expect(ttRBracket);
               if IsArrayOfTables then
               begin
                 if FCurrentToken.TokenType <> ttRBracket then
                   raise ETOMLParserException.Create('Expected second "]" for Array of Tables header');
-                // 第二个 ] 必须紧跟第一个 ]
+                // The second ] must immediately follow the first ]
                 if (FCurrentToken.Line <> FirstClosing.Line) or (FCurrentToken.Column <> FirstClosing.Column + 1) then
                   raise ETOMLParserException.Create('Spaces are not allowed between brackets in [[table]] header');
                 Advance;
               end;
 
-              // 表头后必须换行或到达文件末尾
+              // The header must be followed by a newline or the end of the file must be reached.
               ExpectNewLineOrEOF;
 
-              // 计算此表头的唯一标识路径
+              // Calculate the unique identifier path for this header.
               HeaderKey := TablePathToKey;
 
-              // 检查是否与已有定义冲突
+              // Check for conflicts with existing definitions.
               if IsArrayOfTables then
               begin
                 if DefinedTables.IndexOf(HeaderKey) >= 0 then
@@ -1783,7 +1897,7 @@ begin
                     (#31, '.')]);
               end;
 
-              // 路径导航：从根部逐级进入
+              // Path navigation: Entering level by level from the root
               CurrentTable := Result;
               var PathTracker: string := '';
 
@@ -1800,10 +1914,11 @@ begin
 
                 if IsLast and IsArrayOfTables then
                 begin
-                  // [[a.b.c]] 的最终段：追加新表到数组
+                  // The final section of [[abc]]: Append the new table to the array
                   if CurrentTable.TryGetValue(Key, Value) then
                   begin
-                    // 已存在的数组必须是由 [[]] 定义的（不能是静态数组 a = []）
+                    // Existing arrays must be defined using [[]]
+                    // (they cannot be static arrays like a = []).
                     if (Value is TTOMLArray) and (DefinedArrays.IndexOf(PathTracker) < 0) then
                       raise ETOMLParserException.Create('Cannot extend static array');
                     if not (Value is TTOMLArray) then
@@ -1821,7 +1936,8 @@ begin
                 end
                 else
                 begin
-                  // 路径中间层级或普通 [a.b.c] 的最终段
+                  // The intermediate level of the path or the final
+                  // segment of a normal [abc] sequence.
                   if not CurrentTable.TryGetValue(Key, Value) then
                   begin
                     Value := TTOMLTable.Create;
@@ -1830,7 +1946,8 @@ begin
 
                   if Value is TTOMLArray then
                   begin
-                    // 只有由 [[]] 定义的数组才允许通过表头导航进入
+                    // Only arrays defined by [[]] are allowed
+                    // to be accessed via the header navigation.
                     if DefinedArrays.IndexOf(PathTracker) < 0 then
                       raise ETOMLParserException.CreateFmt('Cannot navigate into static array "%s"', [Key]);
 
@@ -1838,17 +1955,18 @@ begin
                     if ArrayValue.Count = 0 then
                       raise ETOMLParserException.Create('Internal error: empty AoT');
 
-                    // 导航到该数组表的最新条目
+                    // Navigate to the latest entry in this array table
                     CurrentTable := TTOMLTable(ArrayValue.Items[ArrayValue.Count - 1]);
                   end
                   else if Value is TTOMLTable then
                   begin
-                    // 内联表不可通过表头扩展
+                    // Inline tables cannot be expanded via table headers.
                     if TTOMLTable(Value).IsInline then
                       raise ETOMLParserException.CreateFmt('Cannot extend inline table "%s"', [Key]);
 
                     CurrentTable := TTOMLTable(Value);
-                    // 到达最终段时将表标记为显式定义
+                    // When the final segment is reached,
+                    // mark the table as explicitly defined.
                     if IsLast and (not IsArrayOfTables) then
                       CurrentTable.IsImplicit := False;
                   end
@@ -1857,10 +1975,11 @@ begin
                 end;
               end;
 
-              // 记录本次显式定义
+              // Record this explicit definition
               if IsArrayOfTables then
               begin
-                // 清除该 AoT 下已记录的子表定义（AoT 每轮迭代重新开始）
+                // Clear the existing sub-table definitions under this AoT
+                // (AoT restarts every iteration).
                 var SubPrefix := HeaderKey + #31;
                 for i := DefinedTables.Count - 1 downto 0 do
                   if Pos(SubPrefix, DefinedTables[i]) = 1 then
@@ -1878,11 +1997,13 @@ begin
                 KeyPair := ParseKeyValue;
                 ExpectNewLineOrEOF;
 
-                // 记录由键值对隐式创建的表路径，防止后续表头重复定义
+                // Record the table path implicitly created by key-value pairs
+                // to prevent subsequent redefinition of table headers.
                 var KVKeyParts := SplitDottedKey(KeyPair.Key);
                 var KVRunningPath := HeaderKey;
 
-                // 记录点号键中间各层级（它们对应隐式创建的表）
+                // Record the levels between the dot keys
+                // (they correspond to implicitly created tables).
                 for i := 0 to High(KVKeyParts) - 1 do
                 begin
                   if KVRunningPath <> '' then
@@ -1892,7 +2013,8 @@ begin
                     DefinedTables.Add(KVRunningPath);
                 end;
 
-                // 若值本身为内联表，则该键也定义了一个表
+                // If the value itself is an inline table,
+                // then the key also defines a table.
                 if KeyPair.Value is TTOMLTable then
                 begin
                   var FullKVPath := KVRunningPath;
@@ -1903,7 +2025,7 @@ begin
                     DefinedTables.Add(FullKVPath);
                 end;
 
-                // 将键值对写入当前表
+                // Write the key-value pairs to the current table.W
                 try
                   if (Pos(#31, KeyPair.Key) > 0) or (KeyPair.Key = #31) then
                   begin
