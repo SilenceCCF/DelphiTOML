@@ -1,41 +1,44 @@
 { TOML.JSON.pas
-  TOML ↔ JSON 格式互转单元。
-  提供两组公开函数：
-    TOML → JSON
-      TOMLToJSON(Table)         将 TTOMLTable 转换为 JSON 字符串
-      TOMLValueToJSON(Value)    将任意 TTOMLValue 转换为 JSON 字符串
-      TOMLFileToJSONFile(...)   从 TOML 文件转换并写入 JSON 文件
-    JSON → TOML
-      JSONToTOML(JSON)          将 JSON 字符串解析为 TTOMLTable
-      JSONToTOMLString(JSON)    将 JSON 字符串转换为 TOML 格式字符串
-      JSONFileToTOMLFile(...)   从 JSON 文件转换并写入 TOML 文件
-  类型映射规则：
-    TOML → JSON
-      string       → JSON string（含完整转义，含代理对 \uXXXX\uXXXX）
-      integer      → JSON number（整数，无小数点）
-      float        → JSON number（优先用原始文本保证精度；inf/nan → null）
-      boolean      → JSON true / false
-      datetime     → JSON string（保留原始 RFC 3339 文本）
-      array        → JSON array
-      table        → JSON object（保留插入顺序）
-      inline table → JSON object（保留插入顺序）
-    JSON → TOML
-      string       → TOML string
-      number       → 含小数点或指数则为 float，否则为 integer
-                     超出 Int64 范围时降级为 float
-      true / false → TOML boolean
-      null         → 跳过该键（TOML 无 null 概念）；
-                     ANullAsEmptyString=True 时写入空字符串
-      array        → TOML array
-      object       → TOML table（key 插入顺序与 JSON 文本一致）
-  实现说明：
-    - 不依赖任何第三方库，内含手写的轻量 JSON 词法 + 语法解析器。
-    - 浮点数优先输出 TTOMLFloat.RawString（原始文本），
-      无原始文本时以 17 位有效数字保证往返精度（IEEE 754 round-trip）。
-    - WriteObject 保留 TTOMLTable.Items 插入顺序，不做字母排序。
-    - \uXXXX 转义正确处理 BMP 以外字符的代理对（surrogate pair）。
-    - JSON → TOML 的 null 值（Val = nil）不会泄漏对象，已在所有分支
-      安全处理。
+  TOML ↔ JSON format conversion unit.
+  Two sets of public functions are provided:
+  TOML → JSON
+  The TOMLToJSON(Table) method converts a TTOMLTable table into a JSON string.
+  The `TOMLValueToJSON(Value)` method converts any `TOMLValue` string into a JSON string.
+  TOMLFileToJSONFile(...) converts a TOML file to a JSON file and writes it to that file.
+  JSON → TOML
+  JSONToTOML(JSON) parses a JSON string into a TTOMLTable.
+  The JSONToTOMLString(JSON) method converts a JSON string to a TOML format string.
+  JSONFileToTOMLFile(...) converts a JSON file to a TOML file and writes it to a TOML file.
+  Type mapping rules:
+  TOML → JSON
+  string → JSON string (including complete escaping, including surrogate pairs \uXXXX\uXXXX)
+  integer → JSON number (integer, without decimal point)
+  float → JSON number (preferably using raw text to ensure precision; inf/nan → null)
+  boolean → JSON true / false
+  datetime → JSON string (preserves the original RFC 3339 text)
+  array → JSON array
+  table → JSON object (preserves insertion order)
+  inline table → JSON object (preserves insertion order)
+
+  JSON → TOML
+  string → TOML string
+  Number → If it contains a decimal point or exponent, it is a float; otherwise, it is an integer.
+  Degraded to float when outside the range of Int64
+  true / false → TOML boolean
+  null → Skip the key (TOML has no null concept);
+  An empty string is written when ANullAsEmptyString=True.
+  array → TOML array
+  object → TOML table (key insertion order is consistent with JSON text)
+  Implementation details:
+  - It does not depend on any third-party libraries and includes a hand-written,
+    lightweight JSON lexical and syntax parser.
+  - Floating-point numbers are output first, using TTOMLFloat.RawString (raw text).
+    In the absence of original text, round-trip accuracy is guaranteed with
+    17 significant digits (IEEE 754 round-trip).
+  - WriteObject preserves the insertion order of TTOMLTable.Items, without alphabetical sorting.
+  - \uXXXX escaping correctly handles surrogate pairs of characters other than BMP.
+  - In JSON to TOML, null values ​​(Val = nil) do not leak objects,
+    as has been implemented in all branches. Safe handling.
 }
 unit TOML.JSON;
 
@@ -45,51 +48,51 @@ uses
   SysUtils, Classes, Math, TOML.Types, TOML.Parser, TOML.Serializer, Generics.Collections;
 { ===== TOML → JSON ===== }
 
-{ 将 TTOMLTable 序列化为 JSON 字符串
-  @param Table        源 TOML 表
-  @param APretty      True 时输出带缩进的美观格式（默认 True）
-  @param AIndentSize  每级缩进的空格数（默认 2）
-  @returns JSON 对象字符串
-  @raises ETOMLException 若值无法转换 }
+{ Serialize TTOMLTable into a JSON string
+  @param Table: Source TOML table
+  @param APretty: True outputs a nicely formatted layout with indentation (default is True).
+  @param AIndentSize: The number of spaces per indentation level (default 2)
+  @returns: JSON object string
+  @raises ETOMLException: if the value cannot be converted }
 function TOMLToJSON(const Table: TTOMLTable; APretty: Boolean = True; AIndentSize: Integer = 2): string;
-{ 将任意 TTOMLValue 序列化为 JSON 字符串（用于非表根节点场景） }
+{Serialize any TTOMLValue into a JSON string (for non-root table nodes) }
 function TOMLValueToJSON(const Value: TTOMLValue; APretty: Boolean = True; AIndentSize: Integer = 2): string;
-{ 读取 TOML 文件并将结果写入 JSON 文件
-  @param ATOMLFile  输入 TOML 文件路径
-  @param AJSONFile  输出 JSON 文件路径
-  @param APretty    是否美观缩进（默认 True）
-  @param ABOM       是否写入 UTF-8 BOM（默认 False，JSON 通常无 BOM）
-  @returns True 若成功，False 若出错 }
+{ Read the TOML file and write the result to a JSON file.
+  @param ATOMLFile: Enter the path to the TOML file.
+  @param AJSONFile: Path to the output JSON file
+  @param APretty: Whether to use aesthetically pleasing indentation (default is True)
+  @param ABOM: Whether to write the UTF-8 BOM (default is False, JSON usually does not have a BOM)
+  @returns True: if successful, False: if an error occurs.}
 function TOMLFileToJSONFile(const ATOMLFile, AJSONFile: string; APretty: Boolean = True; ABOM: Boolean = False):
   Boolean;
 { ===== JSON → TOML ===== }
 
-(* 将 JSON 字符串解析为 TTOMLTable
-  @param AJSON              JSON 字符串（根节点必须是对象 { ... }）
-  @param ANullAsEmptyString True 时将 JSON null 转为空字符串；
-                            False 时忽略 null 键（默认 False）
-  @returns 新建的 TTOMLTable（调用方负责释放）
-  @raises ETOMLParserException 若 JSON 格式非法或根节点不是对象 *)
+(* Parse the JSON string into TTOMLTable
+  @param AJSON: JSON string (the root node must be an object { ... })
+  @param ANullAsEmptyString: True converts JSON null to an empty string;
+                             Ignore null keys when set to False (default is False)
+  @returns: creates a new TTOMLTable (the caller is responsible for releasing it).
+  @raises ETOMLParserException: if the JSON format is invalid or the root node is not an object. *)
 function JSONToTOML(const AJSON: string; ANullAsEmptyString: Boolean = False): TTOMLTable;
-{ 将 JSON 字符串转换为 TOML 格式字符串（便捷封装） }
+{ Convert JSON string to TOML format string (convenient encapsulation) }
 function JSONToTOMLString(const AJSON: string; ANullAsEmptyString: Boolean = False): string;
-{ 读取 JSON 文件并将结果写入 TOML 文件
-  @param AJSONFile          输入 JSON 文件路径
-  @param ATOMLFile          输出 TOML 文件路径
-  @param ANullAsEmptyString null 处理策略（同 JSONToTOML）
-  @param ABOM               是否写入 UTF-8 BOM（默认 True，TOML 文件常带 BOM）
-  @returns True 若成功，False 若出错 }
+{ Read a JSON file and write the result to a TOML file.
+  @param AJSONFile: Path to the input JSON file
+  @param ATOMLFile: Path to the output TOML file
+  @param ANullAsEmptyString: null Handling strategy (same as JSONToTOML)
+  @param ABOM: Whether to write the UTF-8 BOM (default is True, TOML files often include a BOM).
+  @returns True: if successful, False: if an error occurs }
 function JSONFileToTOMLFile(const AJSONFile, ATOMLFile: string; ANullAsEmptyString: Boolean = False; ABOM:
   Boolean = True): Boolean;
 
 implementation
 (* ======================================================================
-  内部：轻量 JSON 词法器
-  支持完整 RFC 8259 词法单元：
+  Internal: Lightweight JSON Lexer
+  Supports the complete RFC 8259 lexical unit:
     object  { "key": value }
     array   [ value, ... ]
-    string  "..."（含所有转义及 \uXXXX 代理对）
-    number  整数 / 浮点（含负号、指数）
+    string  "..." (Including all escape sequences and \uXXXX proxy pairs)
+    number  Integer/Floating-point (including negative sign and exponent)
     true / false / null
   ====================================================================== *)
 
@@ -101,19 +104,19 @@ type
     jtkColon,     // :
     jtkComma,     // ,
     jtkString,    // "..."
-    jtkNumber,    // 数字（整数或浮点）
+    jtkNumber,    // Number (integer or floating point)）
     jtkTrue,      // true
     jtkFalse,     // false
     jtkNull,      // null
-    jtkEOF        // 输入结束
+    jtkEOF        // End of input
   );
 
   TJSONToken = record
     Kind: TJSONTokenKind;
-    Str: string;   // jtkString / jtkNumber 时有效
-    IsFloat: Boolean;  // jtkNumber 时标记是否为浮点
+    Str: string;   // Valid for jtkString / jtkNumber
+    IsFloat: Boolean;  // jtkNumber Whether the mark is floating point
   end;
-  { 轻量 JSON 词法器 }
+  { Lightweight JSON Lexer }
   TJSONLexer = class
   private
     FText: string;
@@ -133,7 +136,7 @@ type
     function Next: TJSONToken;
     function PeekToken: TJSONToken;
   end;
-  { 轻量 JSON 语法解析器，直接产出 TTOMLValue 树 }
+  { A lightweight JSON parser that directly generates a TTOMLValue tree. }
   TJSONParser = class
   private
     FLexer: TJSONLexer;
@@ -142,7 +145,7 @@ type
 
     procedure Advance;
     procedure Expect(Kind: TJSONTokenKind);
-    function ParseValue: TTOMLValue;   // 返回 nil 表示 JSON null 且不转为空串
+    function ParseValue: TTOMLValue;   // Returning nil indicates that the JSON is null and will not be converted to an empty string.
     function ParseObject: TTOMLTable;
     function ParseArray: TTOMLArray;
   public
@@ -151,7 +154,7 @@ type
     function Parse: TTOMLTable;
   end;
 { ======================================================================
-  TJSONLexer 实现
+  TJSONLexer implementation
   ====================================================================== }
 
 constructor TJSONLexer.Create(const AText: string);
@@ -192,7 +195,8 @@ begin
 end;
 
 function TJSONLexer.ScanString: TJSONToken;
-{ 处理 JSON 字符串，支持所有转义字符及 \uXXXX（含 BMP 以外的代理对） }
+{ Processes JSON strings, supporting all escape characters
+  and \uXXXX (including proxy pairs other than BMP) }
 var
   SB: TStringBuilder;
   C: Char;
@@ -202,7 +206,7 @@ var
 begin
   Result.Kind := jtkString;
   Result.IsFloat := False;
-  Advance; // 消耗开头的 "
+  Advance;
 
   SB := TStringBuilder.Create;
   try
@@ -210,7 +214,7 @@ begin
     begin
       C := Advance;
       if C = '"' then
-        Break; // 字符串结束
+        Break;
 
       if C <> '\' then
       begin
@@ -218,7 +222,7 @@ begin
         Continue;
       end;
 
-      // 转义序列
+      // Escape sequences
       if IsAtEnd then
         raise ETOMLParserException.Create('JSON: unterminated escape sequence');
 
@@ -242,7 +246,7 @@ begin
           SB.Append(#9);
         'u':
           begin
-            // 读取 4 位十六进制码点
+            // Read 4-digit hexadecimal code points
             Hex := '';
             for i := 1 to 4 do
             begin
@@ -252,12 +256,12 @@ begin
             end;
             Hi := StrToInt('$' + Hex);
 
-            // 检测高代理：D800..DBFF，后续必须跟 \uDC00..DFFF 低代理
+            // High proxy detection: D800..DBFF, followed by \uDC00..DFFF. Low proxy.
             if (Hi >= $D800) and (Hi <= $DBFF) then
             begin
               if (not IsAtEnd) and (Advance = '\') and (not IsAtEnd) and (Peek = 'u') then
               begin
-                Advance; // 消耗 'u'
+                Advance;
                 Hex := '';
                 for i := 1 to 4 do
                 begin
@@ -268,7 +272,8 @@ begin
                 Lo := StrToInt('$' + Hex);
                 if (Lo >= $DC00) and (Lo <= $DFFF) then
                 begin
-                  // 合并代理对为完整 Unicode 码点，再编码为 UTF-16（两个 WideChar）
+                  // Merge the surrogate pairs into complete Unicode code points,
+                  // then encode them into UTF-16 (two WideChar codes).
                   var CP: Cardinal := $10000 + (Hi - $D800) * $400 + (Lo - $DC00);
                   SB.Append(WideChar($D800 + (CP - $10000) shr 10));
                   SB.Append(WideChar($DC00 + (CP - $10000) and $3FF));
@@ -282,7 +287,7 @@ begin
             else if (Hi >= $DC00) and (Hi <= $DFFF) then
               raise ETOMLParserException.CreateFmt('JSON: unexpected low surrogate U+%.4X', [Hi])
             else
-              SB.Append(WideChar(Hi)); // 普通 BMP 字符
+              SB.Append(WideChar(Hi));
           end;
       else
         raise ETOMLParserException.CreateFmt('JSON: unknown escape character "\\%s"', [C]);
@@ -295,7 +300,7 @@ begin
 end;
 
 function TJSONLexer.ScanNumber: TJSONToken;
-{ 解析 JSON number，与 RFC 8259 §6 一致 }
+{ Parsing JSON numbers }
 var
   SB: TStringBuilder;
   IsFloat: Boolean;
@@ -304,15 +309,15 @@ begin
   IsFloat := False;
   SB := TStringBuilder.Create;
   try
-    // 可选负号
+    // Optional negative sign
     if Peek = '-' then
       SB.Append(Advance);
 
-    // 整数部分：0 或 1-9 后接若干位
+    // Integer part
     while (not IsAtEnd) and (Peek >= '0') and (Peek <= '9') do
       SB.Append(Advance);
 
-    // 小数部分
+    // Decimal part
     if (not IsAtEnd) and (Peek = '.') then
     begin
       IsFloat := True;
@@ -321,7 +326,7 @@ begin
         SB.Append(Advance);
     end;
 
-    // 指数部分
+    // Exponential section
     if (not IsAtEnd) and ((Peek = 'e') or (Peek = 'E')) then
     begin
       IsFloat := True;
@@ -340,8 +345,7 @@ begin
 end;
 
 function TJSONLexer.ScanKeyword(const Expected: string; Kind: TJSONTokenKind): TJSONToken;
-{ 匹配 true / false / null 关键字。
-  调用时 FPos 已指向关键字第一个字符（尚未消耗），逐字符验证。 }
+{ Matches the keywords true / false / null }
 var
   i: Integer;
 begin
@@ -442,14 +446,14 @@ begin
   Result := FPeekedToken;
 end;
 { ======================================================================
-  TJSONParser 实现
+  TJSONParser implementation
   ====================================================================== }
 
 constructor TJSONParser.Create(const AText: string; ANullAsEmpty: Boolean);
 begin
   FLexer := TJSONLexer.Create(AText);
   FNullAsEmpty := ANullAsEmpty;
-  Advance; // 预读第一个 token
+  Advance;
 end;
 
 destructor TJSONParser.Destroy;
@@ -471,8 +475,7 @@ begin
 end;
 
 function TJSONParser.ParseValue: TTOMLValue;
-{ 返回 nil 当且仅当遇到 JSON null 且 FNullAsEmpty = False。
-  调用方须检查返回值后再决定是否将其加入容器。 }
+
 var
   IntVal: Int64;
   FloatVal: Double;
@@ -497,7 +500,8 @@ begin
       begin
         if FCurrent.IsFloat then
         begin
-          // 浮点：用 Invariant 格式设置解析，保留原始文本用于往返
+          // Floating-point: Parse using Invariant formatting,
+          // preserving the original text for round trips.
           FS := TFormatSettings.Invariant;
           if not TryStrToFloat(FCurrent.Str, FloatVal, FS) then
             raise ETOMLParserException.CreateFmt('JSON: invalid float number "%s"', [FCurrent.Str]);
@@ -505,7 +509,7 @@ begin
         end
         else
         begin
-          // 优先尝试 Int64；超范围时降级为浮点
+          // Prioritize Int64; downgrade to floating-point if out of range.
           Val(FCurrent.Str, IntVal, Code);
           if Code = 0 then
             Result := TTOMLInteger.Create(IntVal)
@@ -534,7 +538,7 @@ begin
 
     jtkNull:
       begin
-        // null → 空字符串 或 nil（调用方跳过）
+        // null
         if FNullAsEmpty then
           Result := TTOMLString.Create('')
         else
@@ -556,7 +560,7 @@ begin
   try
     Expect(jtkLBrace);
 
-    // 空对象 {}
+    // {}
     if FCurrent.Kind = jtkRBrace then
     begin
       Advance;
@@ -564,7 +568,7 @@ begin
     end;
 
     repeat
-      // 键必须是字符串
+      // The key must be a string.
       if FCurrent.Kind <> jtkString then
         raise ETOMLParserException.CreateFmt('JSON: object key must be a string, got "%s"', [FCurrent.Str]);
       Key := FCurrent.Str;
@@ -576,7 +580,7 @@ begin
 
       if Assigned(Val) then
       begin
-        // Val 已创建，Add 失败时需要释放它
+        // Val has already been created; it needs to be released if Add fails.
         try
           Result.Add(Key, Val);
         except
@@ -584,14 +588,14 @@ begin
           raise;
         end;
       end;
-      // Val = nil（JSON null 且 FNullAsEmpty=False）时直接跳过，无需释放
+      // Val = nil (If the JSON is null and FNullAsEmpty=False, skip directly; no need to release.)
 
       if FCurrent.Kind = jtkComma then
         Advance
       else
         Break;
 
-      // 允许尾随逗号（宽容解析）
+      // A trailing comma is allowed (forgiving parsing)
       if FCurrent.Kind = jtkRBrace then
         Break;
     until False;
@@ -623,17 +627,14 @@ begin
       if Assigned(Val) then
         Result.Add(Val)
       else if FNullAsEmpty then
-        // FNullAsEmpty=True 时 ParseValue 已返回 TTOMLString('')，
-        // 不会进入此分支；此处仅作防御性保留
         Result.Add(TTOMLString.Create(''));
-      // Val = nil（null 且不转空串）时跳过，无需释放
 
       if FCurrent.Kind = jtkComma then
         Advance
       else
         Break;
 
-      // 允许尾随逗号
+      // A trailing comma is allowed (forgiving parsing)
       if FCurrent.Kind = jtkRBracket then
         Break;
     until False;
@@ -650,12 +651,11 @@ begin
   if FCurrent.Kind <> jtkLBrace then
     raise ETOMLParserException.Create('JSON: root value must be a JSON object { ... }');
   Result := ParseObject;
-  // 根对象后应只剩空白或 EOF
   if FCurrent.Kind <> jtkEOF then
     raise ETOMLParserException.Create('JSON: unexpected content after root object');
 end;
 { ======================================================================
-  内部：TOML → JSON 序列化器
+  内部：TOML → JSON serializer
   ====================================================================== }
 
 type
@@ -665,7 +665,7 @@ type
     FPretty: Boolean;
     FIndentSize: Integer;
     FIndentLevel: Integer;
-    FFS: TFormatSettings; // 不变量格式设置，保证小数点为 '.'
+    FFS: TFormatSettings; // Invariant formatting ensures that the decimal point is '.'.
 
     procedure Indent;
     procedure NewLine;
@@ -710,9 +710,11 @@ begin
 end;
 
 procedure TTOMLToJSONSerializer.WriteJSONString(const S: string);
-{ 输出带双引号的 JSON 字符串，所有控制字符及特殊字符均正确转义。
-  Delphi 字符串为 UTF-16；代理对字符（U+D800..U+DFFF）直接保留为
-  \uXXXX\uXXXX 对，接收方可正确还原为 UTF-16 或 UTF-8。 }
+{ Outputs a JSON string with double quotes, and all control characters
+  and special characters are correctly escaped.
+  Delphi strings are UTF-16; surrogate characters (U+D800..U+DFFF)
+  are directly preserved as...
+  Yes, the receiver can correctly restore it to UTF-16 or UTF-8. }
 var
   i: Integer;
   C: Char;
@@ -741,7 +743,7 @@ begin
         FSB.Append('\r');
     else
       if Code < $20 then
-        // 其余控制字符 → \u00XX
+        // other → \u00XX
         FSB.AppendFormat('\u%.4x', [Code])
       else
         FSB.Append(C);
@@ -770,19 +772,20 @@ begin
       begin
         F := V.AsFloat;
         if IsNaN(F) or IsInfinite(F) then
-          // JSON 规范不支持 inf / nan → 输出 null
+          // The JSON specification does not support inf/nan → outputs null.
           FSB.Append('null')
         else
         begin
-          // 优先使用原始文本，保证浮点往返精度
+          // Use raw text first to ensure floating-point round-trip precision.
           if (V is TTOMLFloat) and (TTOMLFloat(V).RawString <> '') then
             S := TTOMLFloat(V).RawString
           else
           begin
-            // 先尝试 15 位（通常够用且更简洁）
+            // Try 15 characters first (it's usually enough and more concise).
             S := FloatToStrF(F, ffGeneral, 15, 0, FFS);
             Val(S, FCheck, Code);
-            // 若 15 位无法精确还原，升至 17 位保证 IEEE 754 round-trip
+            // If 15 bits cannot accurately restore the data,
+            // increase to 17 bits to ensure IEEE 754 round-trip.
             if (Code <> 0) or (FCheck <> F) then
               S := FloatToStrF(F, ffGeneral, 17, 0, FFS);
           end;
@@ -798,7 +801,8 @@ begin
 
     tvtDateTime:
       begin
-        // 保留原始 RFC 3339 文本；无原始文本时回退到 AsString
+        // Preserve the original RFC 3339 text;
+        // fall back to AsString if no original text is available.
         if (V is TTOMLDateTime) and (TTOMLDateTime(V).RawString <> '') then
           WriteJSONString(TTOMLDateTime(V).RawString)
         else
@@ -815,9 +819,11 @@ begin
 end;
 
 procedure TTOMLToJSONSerializer.WriteObject(const T: TTOMLTable);
-{ 保留 TTOMLTable.Items 的插入顺序，不做额外排序。
-  TTOMLTable.Items 底层为 TDictionary，本身无序；
-  若需要稳定顺序，建议上层业务在 TOML 文件中按序定义键。 }
+{ Preserve the insertion order of TTOMLTable.
+  Items without performing any additional sorting.
+  TTOMLTable.Items is based on TDictionary and is inherently unordered.
+  If a stable order is required, it is recommended that the upper-level
+  business define the keys sequentially in the TOML file.}
 var
   Pair: TPair<string, TTOMLValue>;
   First: Boolean;
@@ -841,7 +847,7 @@ begin
   end;
 
   Dec(FIndentLevel);
-  if not First then // 非空对象：换行并缩进右括号
+  if not First then // Non-empty objects: newline and indented closing parenthesis
   begin
     NewLine;
     Indent;
@@ -881,7 +887,8 @@ begin
   Result := FSB.ToString;
 end;
 { ======================================================================
-  内部辅助：UTF-8 文件写入（兼容 Delphi 10.4，避免 WriteBOM 属性问题）
+  Internal auxiliary function: UTF-8 file writing
+  (compatible with Delphi 10.4, avoiding WriteBOM property issues)
   ====================================================================== }
 
 procedure WriteUTF8File(const FileName, Content: string; ABOM: Boolean);
@@ -903,7 +910,7 @@ begin
   end;
 end;
 { ======================================================================
-  公开函数实现
+  Public function implementation
   ====================================================================== }
 
 function TOMLToJSON(const Table: TTOMLTable; APretty: Boolean; AIndentSize: Integer): string;
@@ -946,7 +953,7 @@ begin
     WriteUTF8File(AJSONFile, JSON, ABOM);
     Result := True;
   except
-    // 出错返回 False
+    // False
   end;
 end;
 
@@ -994,10 +1001,10 @@ begin
     try
       Result := SerializeTOMLToFile(Table, ATOMLFile, ABOM);
     finally
-      Table.Free; // 修复：原版此处有内存泄漏
+      Table.Free;
     end;
   except
-    // 出错返回 False
+    //  False
   end;
 end;
 
