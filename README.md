@@ -59,7 +59,7 @@ The following are the new methods compared to the original unit:
       Array.GetTable(Index);
       Array.ForEachTable(Procedure);     // Traversing the array
 ```
-- 写入
+- Write
 ```
       // Types of set，The default value overrides the original value.
       Config.SetStr(key, value, [Overwrite]);
@@ -101,7 +101,7 @@ The following are the new methods compared to the original unit:
       Config := Table;
       Tags := Arr;
 
-      // 其它工具方法    
+      // Other tools and methods    
       Config.SaveToFile('config.toml');  // save to file
       Config.LoadFromString(ATOML,True); // load from string
       Config.ToString;                   // convert to string
