@@ -224,27 +224,38 @@ type
     { ===== Read method ===== }
 
     function GetStr(Index: Integer; const DefaultValue: string = ''): string;
+    function TryGetStr(Index: Integer; out Value: string): Boolean;
     function GetInt(Index: Integer; const DefaultValue: Int64 = 0): Int64;
+    function TryGetInt(Index: Integer; out Value: Integer): Boolean;
     function GetFloat(Index: Integer; const DefaultValue: Double = 0.0): Double;
-
+    function TryGetFloat(Index: Integer; out Value: Double): Boolean;
     { Get the raw text of floating-point numbers
       (preserving the exact representation in the TOML file)
       @param DefaultValue: The default value is returned
        when the index is out of bounds or the element
        is not a floating-point type. }
     function GetFloatValue(Index: Integer; const DefaultValue: string = ''): string;
-
+    function TryGetFloatValue(Index: Integer; out Value: string): Boolean;
     function GetBool(Index: Integer; const DefaultValue: Boolean = False): Boolean;
+    function TryGetBool(Index: Integer; out Value: Boolean): Boolean;
     function GetDateTime(Index: Integer; const DefaultValue: TDateTime = 0): TDateTime;
+    function TryGetDateTime(Index: Integer; out Value: TDateTime): Boolean;
     function GetDateTimeValue(Index: Integer; const DefaultValue: string = ''): string;
+    function TryGetDateTimeValue(Index: Integer; out Value: string): Boolean;
     { Retrieves the table element at the specified index;
       returns nil if the element does not exist or its type does not match. }
     function GetTable(Index: Integer): TTOMLTable;
+    function TryGetTable(Index: Integer; out Value: TTOMLTable): Boolean;
+    { Securely retrieve the element at the specified index
+      @param Value: Output parameters, return the corresponding element on success.
+      @returns }
+    function TryGetItem(Index: Integer; out Value: TTOMLValue): Boolean;
 
     { Iterate through all table-type elements in the array
       @param Proc: Anonymous procedure performed for each TTOMLTable }
-    procedure ForEachTable(Proc: TProc<TTOMLTable>);
-
+//    procedure ForEachTable(Proc: TProc<TTOMLTable>);
+    function GetArray(Index: Integer): TTOMLArray;
+    function TryGetArray(Index: Integer; out Value: TTOMLArray): Boolean;
     { == Add method (returns Self, supports chaining, returns nil on error) == }
 
     function AddStr(const Value: string): TTOMLArray;
@@ -276,6 +287,70 @@ type
     { Add nested array elements (transfer ownership) }
     function AddArray(Value: TTOMLArray): TTOMLArray;
 
+    { == Set method == }
+
+    {Modify the string value at the specified index}
+    function SetStr(Index: Integer; const Value: string; FreeOld: Boolean = True): Boolean;
+
+    { Modify the integer value at the specified index }
+    function SetInt(Index: Integer; const Value: Int64; FreeOld: Boolean = True): Boolean;
+
+    { Modify the float value at the specified index }
+    function SetFloat(Index: Integer; const Value: Double; FreeOld: Boolean = True): Boolean;
+
+    { Modify the original text of the floating-point number at the specified index. }
+    function SetFloatValue(Index: Integer; const RawValue: string; FreeOld: Boolean = True): Boolean;
+
+    { Modify the boolean value at the specified index }
+    function SetBool(Index: Integer; const Value: Boolean; FreeOld: Boolean = True): Boolean;
+
+    { Modify the datetime value at the specified index }
+    function SetDateTime(Index: Integer; const Value: TDateTime; FreeOld: Boolean = True): Boolean;
+
+    { Modify the original text of the datetime at the specified index. }
+    function SetDateTimeValue(Index: Integer; const RawValue: string; FreeOld: Boolean = True): Boolean;
+
+    { Modify the array at the specified index (ownership transfer)
+      @param FreeOld: When True, the old value is released;
+                      when False, the caller must manage it themselves.
+      @returns True Success; False Index out of bounds or Value is nil }
+    function SetArray(Index: Integer; Value: TTOMLArray; FreeOld: Boolean = True): Boolean;
+
+    { Modify the table at the specified index (ownership transfer)） }
+    function SetTable(Index: Integer; Value: TTOMLTable; FreeOld: Boolean = True): Boolean;
+
+    { ===== Insert methods ===== }
+
+    { Insert a string value at the specified index position.
+      @param Index The insertion position (0 for the beginning, Count for the end).
+      @param Value The value to be inserted.
+      @returns True Success; False Index out of bounds }
+    function InsertStr(Index: Integer; const Value: string): Boolean;
+
+    { Insert a integer value at the specified index position. }
+    function InsertInt(Index: Integer; const Value: Int64): Boolean;
+
+    { Insert a float value at the specified index position. }
+    function InsertFloat(Index: Integer; const Value: Double): Boolean;
+
+    { Insert raw floating-point number text at the specified position }
+    function InsertFloatValue(Index: Integer; const RawValue: string): Boolean;
+
+    { Insert a boolean value at the specified index position. }
+    function InsertBool(Index: Integer; const Value: Boolean): Boolean;
+
+    { Insert a datetime value at the specified index position. }
+    function InsertDateTime(Index: Integer; const Value: TDateTime): Boolean;
+
+    { Insert raw date and time text at the specified location. }
+    function InsertDateTimeValue(Index: Integer; const RawValue: string): Boolean;
+
+    { Insert an array at a specified position (ownership transfer) }
+    function InsertArray(Index: Integer; Value: TTOMLArray): Boolean;
+
+    { Insert a table (ownership transfer) at the specified location. }
+    function InsertTable(Index: Integer; Value: TTOMLTable): Boolean;
+
     { ===== Serialization ===== }
 
     { Serialize this array into a TOML string; return an empty string on error.}
@@ -292,10 +367,17 @@ type
       @returns }
     function RemoveAt(Index: Integer; FreeItem: Boolean = True): Boolean;
 
-    { Securely retrieve the element at the specified index
-      @param Value: Output parameters, return the corresponding element on success.
-      @returns }
-    function TryGetItem(Index: Integer; out Value: TTOMLValue): Boolean;
+    { ===== Traversal methods ===== }
+    { Iterate through all table type elements (simplified version) }
+    procedure ForEachTable(Proc: TProc<TTOMLTable>); overload;
+
+    { Iterate through all table type elements
+      @param Callback: The callback function that receives the index and table reference,
+                       and returns False to prematurely end the iteration.
+      @param SkipNonTables If True, skip non-table elements;
+             otherwise, stop when a non-table element is encountered. }
+    procedure ForEachTable(Callback: TFunc<Integer, TTOMLTable, Boolean>; SkipNonTables: Boolean = True); overload;
+
   end;
 
 { ===== Global factory function ===== }
@@ -1029,8 +1111,8 @@ begin
       if not (RawVal is TTOMLDateTime) then
         raise ETOMLParserException.CreateFmt('SetDateTimeValue: "%s" is not a TOML datetime literal', [RawValue]);
 
-      NewValue := TTOMLDateTime.Create(TTOMLDateTime(RawVal).Value, RawValue,
-        TTOMLDateTime(RawVal).Kind, TTOMLDateTime(RawVal).TimeZoneOffset);
+      NewValue := TTOMLDateTime.Create(TTOMLDateTime(RawVal).Value, RawValue, TTOMLDateTime(RawVal).Kind,
+        TTOMLDateTime(RawVal).TimeZoneOffset);
     finally
       Temp.Free;
     end;
@@ -1254,6 +1336,24 @@ begin
   end;
 end;
 
+function TTOMLArrayHelper.TryGetStr(Index: Integer; out Value: string): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLString);
+      if Result then
+        Value := TTOMLString(Item).Value;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
 function TTOMLArrayHelper.GetInt(Index: Integer; const DefaultValue: Int64): Int64;
 var
   Item: TTOMLValue;
@@ -1271,6 +1371,24 @@ begin
       Result := DefaultValue;
   except
     Result := DefaultValue;
+  end;
+end;
+
+function TTOMLArrayHelper.TryGetInt(Index: Integer; out Value: Integer): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLInteger);
+      if Result then
+        Value := TTOMLInteger(Item).Value;
+    end;
+  except
+    Result := False;
   end;
 end;
 
@@ -1301,6 +1419,24 @@ begin
   end;
 end;
 
+function TTOMLArrayHelper.TryGetFloat(Index: Integer; out Value: Double): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLFloat);
+      if Result then
+        Value := TTOMLFloat(Item).Value;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
 function TTOMLArrayHelper.GetFloatValue(Index: Integer; const DefaultValue: string): string;
 var
   Item: TTOMLValue;
@@ -1318,6 +1454,24 @@ begin
       Result := DefaultValue;
   except
     Result := DefaultValue;
+  end;
+end;
+
+function TTOMLArrayHelper.TryGetFloatValue(Index: Integer; out Value: string): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLFloat);
+      if Result then
+        Value := TTOMLFloat(Item).RawString;
+    end;
+  except
+    Result := False;
   end;
 end;
 
@@ -1341,6 +1495,24 @@ begin
   end;
 end;
 
+function TTOMLArrayHelper.TryGetBool(Index: Integer; out Value: Boolean): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLBoolean);
+      if Result then
+        Value := TTOMLBoolean(Item).Value;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
 function TTOMLArrayHelper.GetDateTime(Index: Integer; const DefaultValue: TDateTime = 0): TDateTime;
 var
   Item: TTOMLValue;
@@ -1361,6 +1533,23 @@ begin
   end;
 end;
 
+function TTOMLArrayHelper.TryGetDateTime(Index: Integer; out Value: TDateTime): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLDateTime);
+      if Result then
+        Value := TTOMLDateTime(Item).Value;
+    end;
+  except
+    Result := False;
+  end;
+end;
 
 function TTOMLArrayHelper.GetDateTimeValue(Index: Integer; const DefaultValue: string = ''): string;
 var
@@ -1379,6 +1568,62 @@ begin
       Result := DefaultValue;
   except
     Result := DefaultValue;
+  end;
+end;
+
+function TTOMLArrayHelper.TryGetDateTimeValue(Index: Integer; out Value: string): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLDateTime);
+      if Result then
+        Value := TTOMLDateTime(Item).RawString;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.TryGetArray(Index: Integer; out Value: TTOMLArray): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLArray);
+      if Result then
+        Value := TTOMLArray(Item);
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.GetArray(Index: Integer): TTOMLArray;
+var
+  Item: TTOMLValue;
+begin
+  try
+    if (Index >= 0) and (Index < Self.Count) then
+    begin
+      Item := Self.Items[Index];
+      if Assigned(Item) and (Item is TTOMLArray) then
+        Result := TTOMLArray(Item)
+      else
+        Result := nil;
+    end
+    else
+      Result := nil;
+  except
+    Result := nil;
   end;
 end;
 
@@ -1402,6 +1647,24 @@ begin
   end;
 end;
 
+function TTOMLArrayHelper.TryGetTable(Index: Integer; out Value: TTOMLTable): Boolean;
+var
+  Item: TTOMLValue;
+begin
+  try
+    Result := (Index >= 0) and (Index < Self.Count);
+    if Result then
+    begin
+      Item := Self.Items[Index];
+      Result := Assigned(Item) and (Item is TTOMLTable);
+      if Result then
+        Value := TTOMLTable(Item);
+    end;
+  except
+    Result := False;
+  end;
+end;
+
 procedure TTOMLArrayHelper.ForEachTable(Proc: TProc<TTOMLTable>);
 var
   i: Integer;
@@ -1421,6 +1684,32 @@ begin
   end;
 end;
 
+procedure TTOMLArrayHelper.ForEachTable(Callback: TFunc<Integer, TTOMLTable, Boolean>; SkipNonTables: Boolean);
+var
+  I: Integer;
+  Item: TTOMLValue;
+  ContinueIteration: Boolean;
+begin
+  if not Assigned(Callback) then
+    Exit;
+  try
+    for I := 0 to Self.Count - 1 do
+    begin
+      Item := Self.Items[I];
+      if Assigned(Item) and (Item is TTOMLTable) then
+      begin
+        ContinueIteration := Callback(I, TTOMLTable(Item));
+        if not ContinueIteration then
+          Break;
+      end
+      else if not SkipNonTables then
+        Break;
+    end;
+  except
+    // Silence on failure
+  end;
+end;
+
 function TTOMLArrayHelper.TryGetItem(Index: Integer; out Value: TTOMLValue): Boolean;
 begin
   try
@@ -1434,6 +1723,7 @@ begin
     Result := False;
   end;
 end;
+
 
 { ===== TTOMLArrayHelper —— Add method implementation ===== }
 
@@ -1616,6 +1906,473 @@ begin
   end;
 end;
 
+function TTOMLArrayHelper.SetStr(Index: Integer; const Value: string; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+  NewValue: TTOMLString;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+    NewValue := TTOMLString.Create(Value);
+    try
+      Self.Items[Index] := NewValue;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      NewValue.Free;
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.SetInt(Index: Integer; const Value: Int64; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+  NewValue: TTOMLInteger;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+    NewValue := TTOMLInteger.Create(Value);
+    try
+      Self.Items[Index] := NewValue;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      NewValue.Free;
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.SetFloat(Index: Integer; const Value: Double; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+  NewValue: TTOMLFloat;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+    NewValue := TTOMLFloat.Create(Value);
+    try
+      Self.Items[Index] := NewValue;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      NewValue.Free;
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.SetFloatValue(Index: Integer; const RawValue: string; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+  Temp: TTOMLTable;
+  RawVal: TTOMLValue;
+  NewValue: TTOMLFloat;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+
+    Temp := ParseTOMLString('__f__ = ' + RawValue);
+    try
+      if not Temp.TryGetValue('__f__', RawVal) or not (RawVal is TTOMLFloat) then
+        Exit;
+      NewValue := TTOMLFloat.Create(TTOMLFloat(RawVal).Value, RawValue);
+    finally
+      Temp.Free;
+    end;
+
+    try
+      Self.Items[Index] := NewValue;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      NewValue.Free;
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.SetBool(Index: Integer; const Value: Boolean; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+  NewValue: TTOMLBoolean;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+    NewValue := TTOMLBoolean.Create(Value);
+    try
+      Self.Items[Index] := NewValue;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      NewValue.Free;
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.SetDateTime(Index: Integer; const Value: TDateTime; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+  NewValue: TTOMLDateTime;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+    NewValue := TTOMLDateTime.Create(Value);
+    try
+      Self.Items[Index] := NewValue;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      NewValue.Free;
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.SetDateTimeValue(Index: Integer; const RawValue: string; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+  Temp: TTOMLTable;
+  RawVal: TTOMLValue;
+  NewValue: TTOMLDateTime;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+
+    Temp := ParseTOMLString('__dt__ = ' + RawValue);
+    try
+      if not Temp.TryGetValue('__dt__', RawVal) or not (RawVal is TTOMLDateTime) then
+        Exit;
+      NewValue := TTOMLDateTime.Create(TTOMLDateTime(RawVal).Value, RawValue, TTOMLDateTime(RawVal).Kind,
+        TTOMLDateTime(RawVal).TimeZoneOffset);
+    finally
+      Temp.Free;
+    end;
+
+    try
+      Self.Items[Index] := NewValue;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      NewValue.Free;
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.SetArray(Index: Integer; Value: TTOMLArray; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+begin
+  Result := False;
+  if not Assigned(Value) then
+    Exit;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+    try
+      Self.Items[Index] := Value;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.SetTable(Index: Integer; Value: TTOMLTable; FreeOld: Boolean): Boolean;
+var
+  OldItem: TTOMLValue;
+begin
+  Result := False;
+  if not Assigned(Value) then
+    Exit;
+  try
+    if (Index < 0) or (Index >= Self.Count) then
+      Exit;
+
+    OldItem := Self.Items[Index];
+    try
+      Self.Items[Index] := Value;
+      if FreeOld and Assigned(OldItem) then
+        OldItem.Free;
+      Result := True;
+    except
+      Self.Items[Index] := OldItem;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+
+{ ===== TTOMLArrayHelper —— InsertXxx method implementation ===== }
+
+function TTOMLArrayHelper.InsertStr(Index: Integer; const Value: string): Boolean;
+var
+  NewValue: TTOMLString;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    NewValue := TTOMLString.Create(Value);
+    try
+      Self.Items.Insert(Index, NewValue);
+      Result := True;
+    except
+      NewValue.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.InsertInt(Index: Integer; const Value: Int64): Boolean;
+var
+  NewValue: TTOMLInteger;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    NewValue := TTOMLInteger.Create(Value);
+    try
+      Self.Items.Insert(Index, NewValue);
+      Result := True;
+    except
+      NewValue.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.InsertFloat(Index: Integer; const Value: Double): Boolean;
+var
+  NewValue: TTOMLFloat;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    NewValue := TTOMLFloat.Create(Value);
+    try
+      Self.Items.Insert(Index, NewValue);
+      Result := True;
+    except
+      NewValue.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.InsertFloatValue(Index: Integer; const RawValue: string): Boolean;
+var
+  Temp: TTOMLTable;
+  RawVal: TTOMLValue;
+  NewValue: TTOMLFloat;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    Temp := ParseTOMLString('__f__ = ' + RawValue);
+    try
+      if not Temp.TryGetValue('__f__', RawVal) or not (RawVal is TTOMLFloat) then
+        Exit;
+      NewValue := TTOMLFloat.Create(TTOMLFloat(RawVal).Value, RawValue);
+    finally
+      Temp.Free;
+    end;
+
+    try
+      Self.Items.Insert(Index, NewValue);
+      Result := True;
+    except
+      NewValue.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.InsertBool(Index: Integer; const Value: Boolean): Boolean;
+var
+  NewValue: TTOMLBoolean;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    NewValue := TTOMLBoolean.Create(Value);
+    try
+      Self.Items.Insert(Index, NewValue);
+      Result := True;
+    except
+      NewValue.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.InsertDateTime(Index: Integer; const Value: TDateTime): Boolean;
+var
+  NewValue: TTOMLDateTime;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    NewValue := TTOMLDateTime.Create(Value);
+    try
+      Self.Items.Insert(Index, NewValue);
+      Result := True;
+    except
+      NewValue.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.InsertDateTimeValue(Index: Integer; const RawValue: string): Boolean;
+var
+  Temp: TTOMLTable;
+  RawVal: TTOMLValue;
+  NewValue: TTOMLDateTime;
+begin
+  Result := False;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    Temp := ParseTOMLString('__dt__ = ' + RawValue);
+    try
+      if not Temp.TryGetValue('__dt__', RawVal) or not (RawVal is TTOMLDateTime) then
+        Exit;
+      NewValue := TTOMLDateTime.Create(TTOMLDateTime(RawVal).Value, RawValue, TTOMLDateTime(RawVal).Kind,
+        TTOMLDateTime(RawVal).TimeZoneOffset);
+    finally
+      Temp.Free;
+    end;
+
+    try
+      Self.Items.Insert(Index, NewValue);
+      Result := True;
+    except
+      NewValue.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.InsertArray(Index: Integer; Value: TTOMLArray): Boolean;
+begin
+  Result := False;
+  if not Assigned(Value) then
+    Exit;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    try
+      Self.Items.Insert(Index, Value);
+      Result := True;
+    except
+      // False
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TTOMLArrayHelper.InsertTable(Index: Integer; Value: TTOMLTable): Boolean;
+begin
+  Result := False;
+  if not Assigned(Value) then
+    Exit;
+  try
+    if (Index < 0) or (Index > Self.Count) then
+      Exit;
+
+    try
+      Self.Items.Insert(Index, Value);
+      Result := True;
+    except
+      // False
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+
 { ===== TTOMLArrayHelper —— Serialization implementation ===== }
 
 function TTOMLArrayHelper.toString: string;
@@ -1661,6 +2418,72 @@ begin
     Result := False;
   end;
 end;
+
+//procedure TTOMLArrayHelper.ForEachTable(Proc: TProc<TTOMLTable>);
+//var
+//  I: Integer;
+//  Item: TTOMLValue;
+//begin
+//  if not Assigned(Proc) then
+//    Exit;
+//  try
+//    for I := 0 to Self.Count - 1 do
+//    begin
+//      Item := Self.Items[I];
+//      if Assigned(Item) and (Item is TTOMLTable) then
+//        Proc(TTOMLTable(Item));
+//    end;
+//  except
+//    // Silence on failure
+//  end;
+//end;
+
+//procedure TTOMLArrayHelper.ForEachTable(Proc: TProc<TTOMLTable>);
+//var
+//  I: Integer;
+//  Item: TTOMLValue;
+//begin
+//  if not Assigned(Proc) then
+//    Exit;
+//  try
+//    for I := 0 to Self.Count - 1 do
+//    begin
+//      Item := Self.Items[I];
+//      if Assigned(Item) and (Item is TTOMLTable) then
+//        Proc(TTOMLTable(Item));
+//    end;
+//  except
+//    // Silence on failure
+//  end;
+//end;
+
+//procedure TTOMLArrayHelper.ForEachTable(Callback: TFunc<Integer, TTOMLTable, Boolean>; SkipNonTables: Boolean);
+//var
+//  I: Integer;
+//  Item: TTOMLValue;
+//  ContinueIteration: Boolean;
+//begin
+//  if not Assigned(Callback) then
+//    Exit;
+//  try
+//    for I := 0 to Self.Count - 1 do
+//    begin
+//      Item := Self.Items[I];
+//      if Assigned(Item) and (Item is TTOMLTable) then
+//      begin
+//        ContinueIteration := Callback(I, TTOMLTable(Item));
+//        if not ContinueIteration then
+//          Break;
+//      end
+//      else if not SkipNonTables then
+//        Break;
+//    end;
+//  except
+//    // Silence on failure
+//  end;
+//end;
+
+
 
 { ===== TTOMLTableHelper：Implement the interconversion method with JSON ===== }
 
