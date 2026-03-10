@@ -326,14 +326,15 @@ end;
 #### SaveToFile - Save to File
 
 ```pascal
-function SaveToFile(const FileName: string; 
-                    WriteBOM: Boolean = True): Boolean;
+function SaveToFile(const FileName: string; WriteBOM: Boolean = True;
+                    AWrapWidth: Integer): Boolean;
 ```
 
 **Parameters:**
 - `FileName` - File path
 - `WriteBOM` - Whether to write UTF-8 BOM (default True)
-
+- `AWrapWidth` - The line break position when the string is too long. The default value is 0, meaning no line break.
+- **Note: If the string value contains \n, it will be automatically split into a multi-line string.**
 **Examples:**
 ```pascal
 if Config.SaveToFile('config.toml', True) then
@@ -360,9 +361,11 @@ if Config.LoadFromString(TOML) then
 
 #### ToString - Serialize to String
 ```pascal
-function ToString: string; 
+function ToString(AWrapWidth: Integer): string;  
 ```
-
+**parameter:**
+- `AWrapWidth` - The line break position when the string is too long. The default value is 0, meaning no line break.
+- **Note: If the string value contains \n, it will be automatically split into a multi-line string.**
 **Examples:**
 ```pascal
 var TOML := Config.ToString;
