@@ -18,109 +18,26 @@ toml-test.exe  test -decoder tomldecoder.exe -encoder TOMLEncoder.exe -toml 1.1.
 ```
 result：
 ```
+# Path must be included
 toml-test v2.1.0 [.\tomldecoder.exe] [.\TOMLEncoder.exe]
   valid tests: 214 passed,  0 failed
 encoder tests: 214 passed,  0 failed
 invalid tests: 466 passed,  0 failed
 ```
 
-The following are the new methods compared to the original unit:
-- Read
-     
-```
-      // load from file
-      Config := NewTable.LoadFromFile('config.toml');
-      // or：
-      Config := LoadToml('config.toml');
-      // Basic types
-      Config.GetStr(Key, Default);       // string
-      Config.GetInt(Key, Default);       // integer
-      Config.GetFloat(Key, Default);     // float
-      Config.GetFloatValue(Key, Default); // float with raw precision string 
-      Config.GetBool(Key, Default);      // boolean
-      Config.GetDateTime(Key, Default);  // datetime
-      Config.GetDateTimeValue(Key, Default);  // Date and time raw precision string
 
-      Config.TryGetStr(Key, Value);      // string
-      Config.TryGetInt(Key, Value);      // integer
-      Config.TryGetFloat(Key, Value);    // float
-      Config.TryGetFloatValue(Key, Value) // float with raw precision string
-      Config.TryGetBool(Key, Value);     // boolean
-      Config.TryetDateTime(Key, Value);  // datetime
-      Config.TryGetDateTimeValue(Key, Value);  // Date and time raw precision string
-      // Complex types
-      Config.GetArray(Key);              // array
-      Config.TryGetArray(Key, value);    // array
-      Config.GetTable(Key);              // table
-      Config.TryGetTable(Key, value);    // table
-
-      // Array methods
-      Array.GetStr(Index, Default);
-      Array.GetInt(Index, Default);
-      Array.GetTable(Index);
-      Array.ForEachTable(Procedure);     // Traversing the array
-```
-- Write
-```
-      // Types of set，The default value overrides the original value.
-      Config.SetStr(key, value, [Overwrite]);
-      Config.SetInt(key, value, [Overwrite]);
-      Config.SetFloat(key, value, [Overwrite]);
-      Config.SetFloatValue(Key, value, [Overwrite]);
-      Config.SetBool(key, value, [Overwrite]);
-      Config.SetDateTime(key, value, [Overwrite]);
-      Config.SetDateTimeValue(key, value, [Overwrite]);
-      Config.SetArray(key, value, [Overwrite]);
-      Config.SetTable(key, value, [Overwrite]);
-
-      // The `Put` method supports overloading, automatically identifies the type, and overrides the original value by default.
-      Config := NewTable
-        .Put(key1, value1, [Overwrite])
-        .Put(key2, value2, [Overwrite])
-        .Put(key3, value3, [Overwrite]);
-
-      // The Add method of an array
-      Tags := NewArray
-        .AddStr('value1')
-        .AddStr('value2')
-        .AddStr('value3');
-
-      Ports := NewArray
-        .AddInt(8080)
-        .AddInt(8081)
-        .AddInt(8082);
-      // Also supports：AddFloat、AddBool、AddDateTime、AddTable
-      // Delete data from array by index
-      Array.RemoveAt(idx);
-      // Empty a array
-      Array.Clear;
-
-      // Create a table or array
-      Config := NewTable;
-      Tags := NewArray;
-      // or:
-      Config := Table;
-      Tags := Arr;
-
-      // Other tools and methods    
-      Config.SaveToFile('config.toml');  // save to file
-      Config.LoadFromString(ATOML,True); // load from string
-      Config.ToString;                   // convert to string
-      Config.Count;                      // get the total number of keys
-      Config.HasKey(Key);                // check if the key exists
-      Config.GetKeys(List, Recursive);   // get all key names
-      Config.REmove('key');              // delete a key
-
-      ParseTOML(ATOML);                  // load from string
-      LoadTOML(FileName);                // load from file
 
 ```  
 - Example：
 ```
     // Open a toml file
-    Config := NewTable.LoadFromFile('config.toml');
-    // or:
     Config := LoadToml('config.toml');
+    // or:
+    Config := NewTable;
+    Config.LoadFromFile('config.toml');
+    // or：
+    Config :=TTOMLTable.Create;
+    Config.LoadFromFile('config.toml');    
     // Read
     width := Config.GetInt('width', 800);
     title := Config.GetStr('title');
@@ -171,7 +88,8 @@ The following are the new methods compared to the original unit:
           .Put('title', 'My App', False);
     // Save to file
     Config.SaveToFile('config.toml');
-
+    Config.SaveToFile('config.toml'); //String values ​​are wrapped every 80 columns.
+    
     //Create table array
     Servers := NewArray
       .AddTable(
@@ -186,14 +104,14 @@ The following are the new methods compared to the original unit:
       );
     Config.SetArray('servers', Servers);
   
-    // Method 1 for traversing an array
+    // Method 1 for traversing a table or array
     parameters.ForEachTable(
       procedure(param: TTOMLTable)
         begin
           showmessage(param.GetStr('name'));
         end
     );
-    // Method 2 for traversing an array
+    // Method 2 for traversing a table or array
     procedure ProcessParameter(param: TTOMLTable);
       begin
         showmessage(param.GetStr('name'));
