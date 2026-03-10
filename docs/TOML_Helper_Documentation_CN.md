@@ -325,23 +325,24 @@ end;
 #### SaveToFile - 保存到文件
 
 ```pascal
-function SaveToFile(const FileName: string; 
-                    WriteBOM: Boolean = True): Boolean;
+function SaveToFile(const FileName: string; WriteBOM: Boolean = True;
+                    AWrapWidth: Integer): Boolean;
 ```
 
 **参数：**
 - `FileName` - 文件路径
 - `WriteBOM` - 是否写入 UTF-8 BOM（默认 True）
-
+- `AWrapWidth` - 字符串超长时的换行位置，默认为 0 不换行。
+- **注意：如果字符串值中含有 \n，则自动拆成多行字符串。**
 **示例：**
 ```pascal
-if Config.SaveToFile('config.toml', True) then
+if Config.SaveToFile('config.toml', True, 80) then
   WriteLn('保存成功')
 else
   WriteLn('保存失败');
 ```
 
-#### LoadFromString - 从字符串解析（新增）
+#### LoadFromString - 从字符串解析
 
 ```pascal
 function LoadFromString(const ATOML: string; 
@@ -359,12 +360,14 @@ if Config.LoadFromString(TOML) then
 
 #### ToString - 序列化为字符串
 ```pascal
-function ToString: string; 
+function ToString(AWrapWidth: Integer): string; 
 ```
-
+**参数：**
+- `AWrapWidth` - 字符串超长时的换行位置，默认为 0 不换行。
+- 
 **示例：**
 ```pascal
-var TOML := Config.ToString;
+var TOML := Config.ToString(120);
 WriteLn(TOML);
 // 输出:
 // title = "MyApp"
