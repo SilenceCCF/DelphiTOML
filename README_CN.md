@@ -14,7 +14,8 @@
 5. 稍做修改也可以支持更低版本的 delphi 和 Free Pascal。
 6. 测试单元用法，编译 tomldecoder 和 TOMLEncoder 单元为 exe 文件，下载[官方测试程序](https://github.com/toml-lang/toml-test/releases)后运行：
 ```
-toml-test.exe  test -decoder tomldecoder.exe -encoder TOMLEncoder.exe -toml 1.1.0 -v > results.txt
+# 必须包含路径
+toml-test.exe  test -decoder .\tomldecoder.exe -encoder .\TOMLEncoder.exe -toml 1.1.0 -v > results.txt
 ```
 结果：
 ```
@@ -24,99 +25,6 @@ encoder tests: 214 passed,  0 failed
 invalid tests: 466 passed,  0 failed
 ```
 
-以下是相比原单元，新增的方法：
-- 读取
-     
-```
-      // 从文件加载
-      Config := LoadToml('config.toml');
-      // 或：
-      Config := NewTable;
-      Config.LoadFromFile('config.toml');
-      // 基本类型
-      Config.GetStr(Key, Default);       // 字符串
-      Config.GetInt(Key, Default);       // 整数
-      Config.GetFloat(Key, Default);     // 浮点数
-      Config.GetBool(Key, Default);      // 布尔值
-      Config.GetDateTime(Key, Default);  // 日期时间
-      Config.GetDateTimeValue(Key, Default);  // 日期时间原始精度字符串
-
-      Config.TryGetStr(Key, Value);      // 字符串
-      Config.TryGetInt(Key, Value);      // 整数
-      Config.TryGetFloat(Key, Value);    // 浮点数
-      Config.TryGetBool(Key, Value);     // 布尔值
-      Config.TryetDateTime(Key, Value);  // 日期时间
-      Config.TryGetDateTimeValue(Key, Value);  // 日期时间原始精度字符串
-      // 复杂类型
-      Config.GetArray(Key);              // 数组（返回nil表示不存在）
-      Config.TryGetArray(Key, value);    // 数组
-      Config.GetTable(Key);              // 表（返回nil表示不存在）
-      Config.TryGetTable(Key, value);    // 表
-
-      // 数组方法
-      Array.GetStr(Index, Default);
-      Array.GetInt(Index, Default);
-      Array.GetFloat、GetBool...
-      Array.GetTable(Index);
-      Array.ForEachTable(Procedure);     // 遍历数组
-```
-- 写入
-```
-      // Set类，默认覆盖原值
-      Config.SetStr(key, value, [Overwrite]);
-      Config.SetInt(key, value, [Overwrite]);
-      Config.SetFloat(key, value, [Overwrite]);
-      Config.SetBool(key, value, [Overwrite]);
-      Config.SetDateTime(key, value, [Overwrite]);
-      Config.SetArray(key, value, [Overwrite]);
-      Config.SetTable(key, value, [Overwrite]);
-
-      // Put方法，支持重载，自动识别类型，默认覆盖原值
-      Config := NewTable
-        .Put(key1, value1, [Overwrite])
-        .Put(key2, value2, [Overwrite])
-        .Put(key3, value3, [Overwrite]);
-
-      // 数组的 Add 方法
-      Tags := NewArray
-        .AddStr('value1')
-        .AddStr('value2')
-        .AddStr('value3');
-
-      Ports := NewArray
-        .AddInt(8080)
-        .AddInt(8081)
-        .AddInt(8082);
-      // 另外也支持：AddFloat、AddBool、AddDateTime、AddTable...
-      // 按索引删除数组中数据
-      Array.RemoveAt(idx);
-      // 清空数组
-      Array.Clear;
-
-      // 创建表或数组
-      Config := NewTable;
-      Tags := NewArray;
-      // 或更短的别名
-      Config := Table;
-      Tags := Arr;
-
-      // 其它工具方法    
-      Config.SaveToFile('config.toml');  // 保存到文件
-      Config.LoadFromString(ATOML,True); // 由字符串载入数据
-      Config.ToString;                   // 转换为字符串
-      Config.Count;                      // 获取键数量
-      Config.HasKey(Key);                // 检查键是否存在
-      Config.GetKeys(List, Recursive);   // 获取所有键名
-      Config.REmove('key');              // 删除键
-
-      ParseTOML(ATOML);                  // 由字符串载入数据
-      LoadTOML(FileName);                // 由文件载入数据
-      // JSON 相关
-      ToJson(APretty,Integer)            // 转换为 JSON 字符串
-      SaveToJSONFile(FileName,aPretty,ABOM) //保存为 JSON 文件
-      LoadFromJSON(JSONString)           // 从 JSON 字符串读取
-      LoadFromJSONFile(FileName,ANullAsEmptyString)     //从 JSON 文件读取
-
 ```  
 - 示例：
 ```
@@ -124,6 +32,9 @@ invalid tests: 466 passed,  0 failed
     Config := LoadToml('config.toml');
     // 或：
     Config := NewTable;
+    Config.LoadFromFile('config.toml');
+    // 或：
+    Config :=TTOMLTable.Create;
     Config.LoadFromFile('config.toml');
     // 读取
     width := Config.GetInt('width', 800);
@@ -135,6 +46,7 @@ invalid tests: 466 passed,  0 failed
 
     //创建
     Config := NewTable;
+    Config :=TTOMLTable.Create;
     Tags := NewArray;
 
     //创建同时赋值：
@@ -174,7 +86,7 @@ invalid tests: 466 passed,  0 failed
           .Put('title', 'My App', False);
     // 保存文件
     Config.SaveToFile('config.toml');
-
+    Config.SaveToFile('config.toml',80); //字符串值按80列换行
     //创建表数组
     Servers := NewArray
       .AddTable(
@@ -189,14 +101,14 @@ invalid tests: 466 passed,  0 failed
       );
     Config.SetArray('servers', Servers);
   
-    // 遍历数组方式一
+    // 遍历表数组方式一
     parameters.ForEachTable(
       procedure(param: TTOMLTable)
         begin
           showmessage(param.GetStr('name'));
         end
     );
-    // 遍历数组方式二
+    // 遍历表数组方式二
     procedure ProcessParameter(param: TTOMLTable);
       begin
         showmessage(param.GetStr('name'));
