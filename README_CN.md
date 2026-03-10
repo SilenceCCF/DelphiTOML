@@ -7,7 +7,7 @@
 
 一个解析 [TOML](https://toml.io/) V 1.1.0 版本格式的单元，改写自 [ikelaiah 的 TOML Parser for Free Pascal](https://github.com/ikelaiah/toml-fp) v1.0.3 版本，适用于 Delphi 2005 及更高版本，并做了大量修订及功能增强：
 1. 完全支持 [TOML V1.1.0](https://toml.io/en/v1.1.0) 规范，经测试已经通过了[TOML 官方测试程序](https://github.com/toml-lang/toml-test)的全部 894 项测试(V 1.1.0 版本)。
-2. 增加 TOML.Helper.pas 单元，新增大量函数和方法，简化读写操作。
+2. 增加 TOML.Helper.pas 单元，新增大量函数和方法，简化读写操作。使用方法参见[文档](docs/TOML_Helper_Documentation_CN.md)。
 3. 增加 TOML.JSON.pas 单元，支持 TOML 和 JSON 格式的相互转换。
 4. 浮点数和日期类型数据支持以原始精度格式输出：RawString。
 5. 稍做修改也可以支持更低版本的 delphi 和 Free Pascal。
