@@ -3,7 +3,7 @@
    This unit converts TOML objects into text format conforming to the TOML v1.1.0 specification, supporting:
     - Key-value pairs (including keys with automatic quotation marks and escaping)
     - Normal table [table] and array table [[array]]
-    - 内联表 { key = value, ... }
+    - Inline tables { key = value, ... }
     - Array [...]
     - Base strings (with escapes)
     - Integers and floating-point numbers (including inf/nan, preserving original precision)）
@@ -110,7 +110,6 @@ type
       @raises ETOMLSerializerException if value cannot be serialized }
     function Serialize(const AValue: TTOMLValue; AWrapWidth: Integer = 0): string;
   end;
-
 { Serializes a TOML value to string format
   @param AValue The value to serialize
   @param AWrapWidth Maximum column width for wrapping. Strings with embedded
@@ -118,8 +117,8 @@ type
          with a line-ending backslash. 0 = disabled (default).
   @returns The serialized TOML string
   @raises ETOMLSerializerException if value cannot be serialized }
-function SerializeTOML(const AValue: TTOMLValue; AWrapWidth: Integer = 0): string;
 
+function SerializeTOML(const AValue: TTOMLValue; AWrapWidth: Integer = 0): string;
 { Serializes a TOML value to a file
   @param AValue The value to serialize
   @param AFileName The output file path
@@ -128,6 +127,7 @@ function SerializeTOML(const AValue: TTOMLValue; AWrapWidth: Integer = 0): strin
   @returns True if successful, False otherwise
   @raises ETOMLSerializerException if value cannot be serialized
   @raises EFileStreamError if file cannot be written }
+
 function SerializeTOMLToFile(const AValue: TTOMLValue; const AFileName: string; BOM: Boolean = True;
   AWrapWidth: Integer = 0): Boolean;
 
@@ -439,7 +439,6 @@ var
   CurIsSpace: Boolean;
   NextWordLen: Integer;
   LookIdx: Integer;
-
   { Escape a single character for use inside a multi-line basic string.
     Real newlines are handled at the line-splitting level so we never
     emit \n or \r here. }
@@ -685,26 +684,116 @@ begin
   FStringBuilder.Append(Str);
 end;
 
+
 procedure TTOMLSerializer.WriteArray(const AArray: TTOMLArray);
+{ TOML v1.1.0 array:
+    - Arrays may span multiple lines.
+    - A trailing comma after the last value is permitted.
+}
 var
   i: Integer;
-  SavedWrapWidth: Integer;
+  SavedWrap: Integer;
+  ForceMulti: Boolean;
+  ProbeBuilder: TStringBuilder;
+  Indent: string;
+  ColLimit: Integer;
+  { Render a single value into a scratch builder to measure its width,
+    or to detect whether it is a complex type. }
+
+  function IsComplex(AValue: TTOMLValue): Boolean;
+  begin
+    Result := AValue.ValueType in [tvtTable, tvtInlineTable, tvtArray];
+  end;
+
+  { Estimate the inline rendering width of a scalar.  We do this by
+    temporarily redirecting FStringBuilder to a throw-away instance. }
+  function InlineWidth(AValue: TTOMLValue): Integer;
+  var
+    Save: TStringBuilder;
+  begin
+    Save := FStringBuilder;
+    FStringBuilder := ProbeBuilder;
+    ProbeBuilder.Clear;
+    WriteValue(AValue);
+    Result := ProbeBuilder.Length;
+    FStringBuilder := Save;
+  end;
+
 begin
-  // TOML spec: multi-line basic strings are NOT allowed inside arrays.
-  // Disable wrapping for the duration of this array.
-  SavedWrapWidth := FWrapWidth;
+  // Disable multi-line string wrapping inside arrays (spec requirement).
+  SavedWrap := FWrapWidth;
   FWrapWidth := 0;
+  ProbeBuilder := TStringBuilder.Create;
   try
-    FStringBuilder.Append('[');
+    // --- Empty array ---
+    if AArray.Count = 0 then
+    begin
+      FStringBuilder.Append('[]');
+      Exit;
+    end;
+
+//    ColLimit := IfThen(SavedWrap > 0, SavedWrap, 80);
+//
+    // --- Decide single-line vs multi-line ---
+    // Force multi-line if any element is itself complex (array / table).
+    ForceMulti := False;
+    for i := 0 to AArray.Count - 1 do
+      if IsComplex(AArray.GetItem(i)) then
+      begin
+        ForceMulti := True;
+        Break;
+      end;
+
+    // Width check is only performed when wrapping is enabled (SavedWrap > 0).
+    // When FWrapWidth = 0 the user explicitly disabled wrapping, so we respect
+    // that and never break a scalar-only array purely on length grounds.
+    if not ForceMulti and (SavedWrap > 0) then
+    begin
+      ColLimit := SavedWrap;
+      var TotalW := FIndentLevel * 2 + 2; // "[ " ... " ]"
+      for i := 0 to AArray.Count - 1 do
+      begin
+        Inc(TotalW, InlineWidth(AArray.GetItem(i)));
+        if i < AArray.Count - 1 then
+          Inc(TotalW, 2); // ", "
+      end;
+      if TotalW > ColLimit then
+        ForceMulti := True;
+    end;
+
+    // --- Single-line format ---
+    if not ForceMulti then
+    begin
+      FStringBuilder.Append('[');
+      for i := 0 to AArray.Count - 1 do
+      begin
+        if i > 0 then
+          FStringBuilder.Append(', ');
+        WriteValue(AArray.GetItem(i));
+      end;
+      FStringBuilder.Append(']');
+      Exit;
+    end;
+
+    // --- Multi-line format ---
+    Indent := StringOfChar(' ', (FIndentLevel + 1) * 2);
+    FStringBuilder.AppendLine('[');
     for i := 0 to AArray.Count - 1 do
     begin
-      if i > 0 then
-        FStringBuilder.Append(', ');
+      FStringBuilder.Append(Indent);
+      Inc(FIndentLevel);
       WriteValue(AArray.GetItem(i));
+      Dec(FIndentLevel);
+      FStringBuilder.Append(',');   // trailing comma always present (spec allows it)
+      FStringBuilder.AppendLine;
     end;
+    // Closing bracket at original indentation level
+    FStringBuilder.Append(StringOfChar(' ', FIndentLevel * 2));
     FStringBuilder.Append(']');
+
   finally
-    FWrapWidth := SavedWrapWidth;
+    FWrapWidth := SavedWrap;
+    ProbeBuilder.Free;
   end;
 end;
 
