@@ -27,16 +27,22 @@ invalid tests: 466 passed,  0 failed
 
   
 - Example：
+  Open a toml file
 ```pascal
-    // Open a toml file
     Config := LoadToml('config.toml');
-    // or:
+```
+  or:
+```pascal
     Config := NewTable;
     Config.LoadFromFile('config.toml');
-    // or：
+```
+  or：
+```pascal   
     Config :=TTOMLTable.Create;
-    Config.LoadFromFile('config.toml');    
-    // Read
+    Config.LoadFromFile('config.toml');
+```
+  Read:
+```pascal   
     width := Config.GetInt('width', 800);
     title := Config.GetStr('title');
     debug := Config.GetBool('debug',False);
@@ -44,12 +50,14 @@ invalid tests: 466 passed,  0 failed
     name := Config.GetStr('"google.com"', 'localhost');
     if Config.TryGetStr('name',value) then
     showmessage(value);
-
-    // Create a table or array
+```
+  Create a table or array:
+```pascal
     Config := NewTable;
     Tags := NewArray;
-
-    //Create and assign values ​​simultaneously：
+```
+  Create and assign values ​​simultaneously：
+```pascal   
     Config := NewTable
       .SetStr('app_name', 'My Application')
       .SetStr('version', '1.0.0')
@@ -59,8 +67,9 @@ invalid tests: 466 passed,  0 failed
       .AddStr('pascal')
       .AddStr('delphi')
       .AddStr('toml');
-
-    // Create nested structures：
+```
+  Create nested structures：
+```pascal
     Config := NewTable
       .Put('server',
         NewTable
@@ -73,22 +82,25 @@ invalid tests: 466 passed,  0 failed
           .Put('port', 5432)
           .Put('pool_size', 10)
       );
-  
-    // Write (by default, overwrite the original value)
+  ```
+  Write (by default, overwrite the original value)
+```pascal
     Config.SetStr('title', 'My App');
     Config.SetInt('width', 1920, True);
     Config.SetBool('debug', False);
     Config.SetFloat('version', 1.1, False);
-
-    // Automatically identify the type and write (by default, overwrite the original value).
+```
+  Automatically identify the type and write (by default, overwrite the original value).
+```pascal
     Config.Put('width', 1920)
           .Put('height', 1080)
           .Put('title', 'My App', False);
-    // Save to file
+  Save to file
     Config.SaveToFile('config.toml');
     Config.SaveToFile('config.toml'); //String values ​​are wrapped every 80 columns.
-    
-    //Create table array
+```    
+  Create table array
+```pascal
     Servers := NewArray
       .AddTable(
         NewTable
@@ -101,15 +113,18 @@ invalid tests: 466 passed,  0 failed
           .Put('ip', '192.168.1.20')
       );
     Config.SetArray('servers', Servers);
-  
-    // Method 1 for traversing a table or array
+```  
+  Method 1 for traversing a table or array
+```pascal
     parameters.ForEachTable(
       procedure(param: TTOMLTable)
         begin
           showmessage(param.GetStr('name'));
         end
     );
-    // Method 2 for traversing a table or array
+```
+  Method 2 for traversing a table or array
+```pascal
     procedure ProcessParameter(param: TTOMLTable);
       begin
         showmessage(param.GetStr('name'));
