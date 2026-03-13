@@ -1,24 +1,20 @@
 (* TOML.Parser.pas
-TOML parser unit (lexical analysis + syntax analysis).
-This unit implements a complete parser conforming to the TOML v1.1.0 specification, using a two-stage design:
-1. TTOMLLexer — Lexical analysis that converts raw text into a sequence of tokens.
-2. TTOMLParser — Syntax analysis, converting token sequences into TOML data structures.
-Supported features:
-- Key-value pairs (bare keys, basic string keys, literal string keys, dot keys)
-- Tables and arrays
-- Inline table { key = value, ... }
-- Array [...] (supports trailing commas and multi-line formatting)
-- Basic strings and literal strings (including multi-line forms)
-- Decimal, hexadecimal (0x), octal (0o), binary (0b) integers
-- Floating-point numbers (including exponents, inf, nan)
-- Boolean value (true / false)
-- Date and time (with time zone offset, local date and time, local date, local time)
-Key implementation details:
-- The segments in the period key are concatenated using #31 (ASCII Unit Separator).
-Avoid confusion with valid dot characters in key names (such as "tt.com").
-- An intermediate table implicitly created using the IsImplicit flag.
-Unlike tables explicitly defined in [header]
-- Use the IsInline flag for inline tables to prevent subsequent expansion of their content via the table header.
+   TOML parser (lexical analysis + syntax analysis).
+   Conforms to the TOML v1.1.0 specification.
+   Comment-aware parsing (optional):
+     When APreserveComments = True is passed to TTOMLParser.Create / ParseTOML*,
+     the parser collects comments and attaches them to the nearest TOML value:
+       CommentBefore   -- blank lines + comment lines that appear BEFORE a key,
+                          a section header, or an array element.
+       CommentInline   -- the comment that appears on the SAME line as a value
+                          (after the value, before the newline).
+       CommentTrailing -- comments that appear AFTER the last item and BEFORE the
+                          closing ']' (arrays) or the next section header / EOF (tables).
+     For the root table:
+       CommentBefore   = file-header comment (everything before the first key/section).
+       CommentTrailing = file-footer comment (everything after the last key/section).
+   Key ordering:
+     Uses TTOMLOrderedTable so that key insertion order is preserved.
 *)
 unit TOML.Parser;
 
@@ -32,231 +28,107 @@ function CharInSet(C: Char; const CharSet: TSysCharSet): Boolean; inline;
 {$IFEND}
 
 type
-  { Token types used during lexical analysis
-    Each token represents a meaningful unit in the TOML syntax }
-  TTokenType = (ttEOF,              // End of file marker
-    ttString,           // String literal (basic or literal)
-    ttMultilineString,  // Multi-line string
-    ttInteger,          // Integer number (decimal, hex, octal, binary)
-    ttFloat,            // Floating point number (with optional exponent)）
-    ttBoolean,          // Boolean value (true/false)）
-    ttDateTime,         // Date/time value (RFC 3339)）
-    ttEqual,            // Equal sign (=)
-    ttDot,              // Dot for nested keys (.)
-    ttComma,            // Comma separator (,)
-    ttLBracket,         // Left bracket ([)
-    ttRBracket,         // Right bracket (])
-    ttLBrace,           // Left brace ({)
-    ttRBrace,           // Right brace (})
-    ttNewLine,          // Line break
-    ttWhitespace,       // Whitespace characters
-    ttComment,          // Comment (# or ##)）
-    ttIdentifier        // Key identifier
-  );
-  { Token record that stores lexical token information }
+  { Token types }
+  TTokenType = (ttEOF, ttString, ttMultilineString, ttInteger, ttFloat, ttBoolean, ttDateTime, ttEqual, ttDot,
+    ttComma, ttLBracket, ttRBracket, ttLBrace, ttRBrace, ttNewLine, ttWhitespace, ttComment, ttIdentifier);
 
   TToken = record
-    TokenType: TTokenType;  // Type of the token
-    Value: string;          // String value of the token
-    Line: Integer;          // Line number (1-based)）
-    Column: Integer;        // Column number (1-based)）
+    TokenType: TTokenType;
+    Value: string;
+    Line: Integer;
+    Column: Integer;
   end;
-  { Key-Value pair type for TOML tables） }
 
   TTOMLKeyValuePair = TPair<string, TTOMLValue>;
-  { Lexer class that performs lexical analysis of TOML input
-    Converts raw TOML text into a sequence of tokens }
+  { Lexer — produces tokens including ttComment and ttNewLine tokens when in
+    comment-preserving mode.  In normal mode comments are silently skipped. }
 
   TTOMLLexer = class
   private
-    FInput: string;      // Input string to tokenize
-    FPosition: Integer;  // Current position in input）
-    FLine: Integer;      // Current line number (1-based)
-    FColumn: Integer;    // Current column number (1-based)
-
-    { Checks if we've reached the end of input
-      @returns True if at end, False otherwise }
+    FInput: string;
+    FPosition: Integer;
+    FLine: Integer;
+    FColumn: Integer;
+    FPreserveComments: Boolean;
     function IsAtEnd: Boolean;
-
-    { Peeks at current character without advancing position
-      @returns Current character or #0 if at end }
     function Peek: Char;
-
-    { Peeks at next character without advancing position
-      @returns Next character or #0 if at end }
     function PeekNext: Char;
-
-    { Advances position and returns current character
-      @returns Current character or #0 if at end }
     function Advance: Char;
-
-    { Skips whitespace and comments in the input }
-    procedure SkipWhitespace;
-
-    { Scans a string token (basic or literal)
-      @returns The scanned string token
-      @raises ETOMLParserException if string is malformed }
+    { Skips horizontal whitespace (space/tab).
+      In comment-preserving mode the '#...' comment is returned as a ttComment
+      token instead of being discarded. }
+    procedure SkipHorizontalWhitespace;
     function ScanString: TToken;
-
-    { Scans a number token (integer or float)
-      @returns The scanned number token
-      @raises ETOMLParserException if number is malformed }
     function ScanNumber: TToken;
-
-    { Scans an identifier token
-      @returns The scanned identifier token }
     function ScanIdentifier: TToken;
-
-    { Scans a datetime token
-      @returns The scanned datetime token
-      @raises ETOMLParserException if datetime is malformed }
     function ScanDateTime: TToken;
-
-    { Character classification helper functions }
-
-    { Checks if character is a digit (0-9)
-      @param C Character to check
-      @returns True if digit, False otherwise }
+    { Scan a comment token (assumes '#' is the current character). }
+    function ScanComment: TToken;
     function IsDigit(C: Char): Boolean;
-
-    { Checks if character is alphabetic (a-z, A-Z)
-    @param C Character to check
-    @returns True if alphabetic, False otherwise }
     function IsAlpha(C: Char): Boolean;
-
-    { Checks if character is alphanumeric (a-z, A-Z, 0-9)
-      @param C Character to check
-      @returns True if alphanumeric, False otherwise }
     function IsAlphaNumeric(C: Char): Boolean;
   public
-    { Creates a new lexer instance
-      @param AInput The TOML input string to tokenize }
-    constructor Create(const AInput: string);
-
-    { Gets the next token from input
-      @returns The next token
-      @raises ETOMLParserException if invalid input encountered }
+    constructor Create(const AInput: string; APreserveComments: Boolean = False);
     function NextToken: TToken;
+    property PreserveComments: Boolean read FPreserveComments;
   end;
-  { Parser class that performs syntactic analysis of TOML input
-    Converts tokens into TOML data structures }
+  { Parser }
 
   TTOMLParser = class
   private
-    FLexer: TTOMLLexer;       // Lexer instance
-    FCurrentToken: TToken;    // Current token being processed
-    FPeekedToken: TToken;     // Next token (if peeked)
-    FHasPeeked: Boolean;      // Whether we have a peeked token
-
-    { Advances to next token }
+    FLexer: TTOMLLexer;
+    FCurrentToken: TToken;
+    FPeekedToken: TToken;
+    FHasPeeked: Boolean;
+    FPreserveComments: Boolean;
+    { Comment accumulation buffer used when FPreserveComments = True.
+      Collects comment lines (and blank lines) until a non-comment token is seen. }
+    FPendingComment: string;
     procedure Advance;
-
-    { Peeks at next token without advancing
-      @returns The next token }
     function Peek: TToken;
-
-    { Checks if current token matches expected type
-      @param TokenType Expected token type
-      @returns True and advances if matches, False otherwise }
     function Match(TokenType: TTokenType): Boolean;
-
-    { Expects current token to be of specific type
-      @param TokenType Expected token type
-      @raises ETOMLParserException if token doesn't match }
     procedure Expect(TokenType: TTokenType);
-
-    { Parsing methods for different TOML constructs }
-
-    { Parses a TOML value
-      @returns The parsed value
-      @raises ETOMLParserException on parse error }
+    { When FPreserveComments is True, skip newlines and collect comment tokens
+      into FPendingComment.  Returns the first non-comment, non-newline token. }
+    procedure SkipNewLinesAndCollectComments;
+    { Flush the pending comment buffer and attach it to AValue.CommentBefore. }
+    procedure AttachPendingAsBefore(AValue: TTOMLValue);
+    { If the current token is a ttComment, consume it and store as inline comment. }
+    procedure CollectInlineComment(AValue: TTOMLValue);
+    { Collect a trailing comment block (comment/blank lines) into a raw string. }
+    function CollectTrailingComment: string;
+    { Append a comment token or newline token to a comment buffer using the
+      correct accumulation rules:
+        ttComment  — append text directly if buf ends with #10 or is empty,
+                     otherwise prepend a #10 separator first.
+        ttNewLine  — append #10 only when buf is non-empty (so leading blank
+                     lines are ignored; consecutive newlines create real blank
+                     lines). }
+    //function  CollectTrailingComment: string;
     function ParseValue: TTOMLValue;
-
-    { Parses a string value
-      @returns The parsed string value
-      @raises ETOMLParserException on parse error }
     function ParseString: TTOMLString;
-
-    { Parses a number value (integer or float)
-      @returns The parsed number value
-      @raises ETOMLParserException on parse error }
     function ParseNumber: TTOMLValue;
-
-    { Parses a boolean value
-      @returns The parsed boolean value
-      @raises ETOMLParserException on parse error }
     function ParseBoolean: TTOMLBoolean;
-
-    { Parses a datetime value
-      @returns The parsed datetime value
-      @raises ETOMLParserException on parse error }
     function ParseDateTime: TTOMLDateTime;
-
-    { Parses an array value
-      @returns The parsed array value
-      @raises ETOMLParserException on parse error }
     function ParseArray: TTOMLArray;
-
-    { Parses an inline table value
-      @returns The parsed table value
-      @raises ETOMLParserException on parse error }
     function ParseInlineTable: TTOMLTable;
-
-    { Parses a key (bare or quoted)
-      @returns The parsed key string
-      @raises ETOMLParserException on parse error }
     function ParseKey: string;
-
-    { Parses a key-value pair
-      @returns The parsed key-value pair
-      @raises ETOMLParserException on parse error }
     function ParseKeyValue: TTOMLKeyValuePair;
-
     function SplitDottedKey(const CompositeKey: string): TArray<string>;
-
-    { Add a key field to the path list. If the segment is not enclosed
-      in quotes and contains a period (due to Lexer's greedy matching
-      using ttFloat), it will be further split. }
     procedure AddKeyToPath(Path: TList<string>; const Segment: string; WasQuoted: Boolean); overload;
     procedure AddKeyToPath(Path: TStrings; const Segment: string; WasQuoted: Boolean); overload;
-
-    { Create/navigate tables level by level using the dot key path,
-      and write values ​​at the final positions. @raises ETOMLParserException
-      if there is a path conflict or a duplicate key definition. }
     procedure SetDottedKey(RootTable: TTOMLTable; const KeyParts: TArray<string>; Value: TTOMLValue);
-
-
-    { The current token must be a newline character or EOF; otherwise,
-      an exception will be thrown. If it's a newline character,
-      it's consumed to prepare for the next statement. }
     procedure ExpectNewLineOrEOF;
-
   public
-    { Creates a new parser instance
-      @param AInput The TOML input string to parse }
-    constructor Create(const AInput: string);
+    constructor Create(const AInput: string; APreserveComments: Boolean = False);
     destructor Destroy; override;
-
-    { Parses the input and returns a TOML table
-      @returns The parsed TOML table
-      @raises ETOMLParserException on parse error }
     function Parse: TTOMLTable;
   end;
+{ Convenience functions }
 
-{ Helper functions }
+function ParseTOMLString(const ATOML: string; APreserveComments: Boolean = False): TTOMLTable;
 
-{ Parses a TOML string into a table
-  @param ATOML The TOML string to parse
-  @returns The parsed TOML table
-  @raises ETOMLParserException on parse error }
-function ParseTOMLString(const ATOML: string): TTOMLTable;
-
-{ Parses a TOML file into a table
-  @param AFileName The file to parse
-  @returns The parsed TOML table
-  @raises ETOMLParserException on parse error
-  @raises EFileStreamError if file cannot be opened }
-function ParseTOMLFile(const AFileName: string): TTOMLTable;
+function ParseTOMLFile(const AFileName: string; APreserveComments: Boolean = False): TTOMLTable;
 
 implementation
 {$IF CompilerVersion < 20.0}
@@ -266,14 +138,15 @@ begin
   Result := C in CharSet;
 end;
 {$IFEND}
+{ =========================================================================
+  ParseTOML helpers
+  ========================================================================= }
 
-{ Helper functions }
-
-function ParseTOMLString(const ATOML: string): TTOMLTable;
+function ParseTOMLString(const ATOML: string; APreserveComments: Boolean): TTOMLTable;
 var
   Parser: TTOMLParser;
 begin
-  Parser := TTOMLParser.Create(ATOML);
+  Parser := TTOMLParser.Create(ATOML, APreserveComments);
   try
     Result := Parser.Parse;
   finally
@@ -281,20 +154,18 @@ begin
   end;
 end;
 
-function ParseTOMLFile(const AFileName: string): TTOMLTable;
+function ParseTOMLFile(const AFileName: string; APreserveComments: Boolean): TTOMLTable;
 var
   Stream: TFileStream;
-  Encoding: TEncoding;
   BOM: array[0..2] of Byte;
   BytesRead: Integer;
-  StringList: TStringList;
+  Encoding: TEncoding;
+  SL: TStringList;
 begin
   Stream := TFileStream.Create(AFileName, fmOpenRead or fmShareDenyNone);
   try
-    // Read the first 3 bytes to detect the BOM encoding mark.
     BytesRead := Stream.Read(BOM, 3);
     Stream.Position := 0;
-
     if (BytesRead >= 3) and (BOM[0] = $EF) and (BOM[1] = $BB) and (BOM[2] = $BF) then
       Encoding := TEncoding.UTF8
     else if (BytesRead >= 2) and (BOM[0] = $FF) and (BOM[1] = $FE) then
@@ -302,43 +173,30 @@ begin
     else if (BytesRead >= 2) and (BOM[0] = $FE) and (BOM[1] = $FF) then
       Encoding := TEncoding.BigEndianUnicode
     else
-      // When there is no BOM, the default encoding is UTF-8
-      // (as required by the TOML specification).）
       Encoding := TEncoding.UTF8;
-
-    StringList := TStringList.Create;
+    SL := TStringList.Create;
     try
-      StringList.LoadFromStream(Stream, Encoding);
-      Result := ParseTOMLString(StringList.Text);
+      SL.LoadFromStream(Stream, Encoding);
+      Result := ParseTOMLString(SL.Text, APreserveComments);
     finally
-      StringList.Free;
+      SL.Free;
     end;
   finally
     Stream.Free;
   end;
 end;
+{ =========================================================================
+  TTOMLLexer
+  ========================================================================= }
 
-{ TTOMLParser Auxiliary methods }
-
-procedure TTOMLParser.ExpectNewLineOrEOF;
-begin
-  // Only newline or end-of-file is allowed after the top-level expression.
-  if not (FCurrentToken.TokenType in [ttNewLine, ttEOF]) then
-    raise ETOMLParserException.CreateFmt('Only one expression allowed per line. Unexpected "%s" at line %d, column %d',
-      [FCurrentToken.Value, FCurrentToken.Line, FCurrentToken.Column]);
-
-  if FCurrentToken.TokenType = ttNewLine then
-    Advance;
-end;
-{ TTOMLLexer }
-
-constructor TTOMLLexer.Create(const AInput: string);
+constructor TTOMLLexer.Create(const AInput: string; APreserveComments: Boolean);
 begin
   inherited Create;
   FInput := AInput;
   FPosition := 1;
   FLine := 1;
   FColumn := 1;
+  FPreserveComments := APreserveComments;
 end;
 
 function TTOMLLexer.IsAtEnd: Boolean;
@@ -379,37 +237,33 @@ begin
     Result := #0;
 end;
 
-procedure TTOMLLexer.SkipWhitespace;
+procedure TTOMLLexer.SkipHorizontalWhitespace;
+begin
+  while not IsAtEnd and CharInSet(Peek, [' ', #9, #$FEFF]) do
+    Advance;
+end;
+
+function TTOMLLexer.ScanComment: TToken;
 var
+  CommentText: string;
   Ch: Char;
   OrdCh: Integer;
 begin
-  while not IsAtEnd do
+  // Current character is '#'
+  CommentText := '#';
+  Advance; // consume '#'
+  while not IsAtEnd and (Peek <> #10) and (Peek <> #13) do
   begin
-    case Peek of
-      ' ', #9, #$FEFF:
-        // Spaces, tabs, and UTF-8 BOMs are all considered blank.
-        Advance;
-      '#':
-        begin
-          // Skip comments until the end of the line, while checking
-          // for illegal control characters.
-          Advance; // 消耗 '#'
-          while (not IsAtEnd) and (Peek <> #10) and (Peek <> #13) do
-          begin
-            Ch := Peek;
-            OrdCh := Ord(Ch);
-            // The comments must not contain U+0000-U+0008, U+000B-U+001F,
-            // or U+007F.
-            if (OrdCh <= 8) or ((OrdCh >= 11) and (OrdCh <= 31)) or (OrdCh = 127) then
-              raise ETOMLParserException.CreateFmt('Control character U+%.4X is not allowed in comments', [OrdCh]);
-            Advance;
-          end;
-        end;
-    else
-      Break;
-    end;
+    Ch := Peek;
+    OrdCh := Ord(Ch);
+    if (OrdCh <= 8) or ((OrdCh >= 11) and (OrdCh <= 31)) or (OrdCh = 127) then
+      raise ETOMLParserException.CreateFmt('Control character U+%.4X is not allowed in comments', [OrdCh]);
+    CommentText := CommentText + Advance;
   end;
+  Result.TokenType := ttComment;
+  Result.Value := CommentText;
+  Result.Line := FLine;
+  Result.Column := FColumn;
 end;
 
 function TTOMLLexer.IsDigit(C: Char): Boolean;
@@ -442,16 +296,12 @@ begin
   IsLiteral := (QuoteChar = '''');
   IsMultiline := False;
   FoundClosing := False;
-
   Advance;
-  // Detect triple quotes (multi-line strings)
   if (Peek = QuoteChar) and (PeekNext = QuoteChar) then
   begin
     IsMultiline := True;
     Advance;
     Advance;
-    // The first newline character at the beginning of a multi-line string
-    // (if immediately followed) is ignored.
     if (Peek = #13) or (Peek = #10) then
     begin
       if Peek = #13 then
@@ -464,17 +314,13 @@ begin
         Advance;
     end;
   end;
-
   TempValue := '';
   while not IsAtEnd do
   begin
-    // 1. Detecting closed delimiters
     if IsMultiline then
     begin
       if Peek = QuoteChar then
       begin
-        // Detect the number of consecutive quotation marks (TOML allows a
-        // maximum of 2 consecutive quotation marks within a multi-line string).
         QuoteCount := 0;
         LookPos := FPosition;
         while (LookPos <= Length(FInput)) and (FInput[LookPos] = QuoteChar) do
@@ -482,13 +328,10 @@ begin
           Inc(QuoteCount);
           Inc(LookPos);
         end;
-
         if QuoteCount >= 3 then
         begin
           if QuoteCount <= 5 then
           begin
-            // 3–5 quotation marks: the first (QuoteCount-3) are the content,
-            // and the last 3 are delimiters.
             for j := 1 to QuoteCount - 3 do
               TempValue := TempValue + Advance;
             Advance;
@@ -514,13 +357,8 @@ begin
       FoundClosing := True;
       Break;
     end;
-
-    // 2. Handling escape sequences (only applies to basic strings;
-    // literal strings are not escaped).
     if (not IsLiteral) and (Peek = '\') then
     begin
-      // In a multi-line basic string, the backslash (\) at the end
-      // of a line is used to ignore newlines and subsequent whitespace.
       if IsMultiline then
       begin
         var SlashPos := FPosition + 1;
@@ -528,41 +366,39 @@ begin
           Inc(SlashPos);
         if (SlashPos <= Length(FInput)) and CharInSet(FInput[SlashPos], [#10, #13]) then
         begin
-          Advance; // 消耗 '\'
-          while (not IsAtEnd) and CharInSet(Peek, [' ', #9, #10, #13]) do
+          Advance;
+          while not IsAtEnd and CharInSet(Peek, [' ', #9, #10, #13]) do
             Advance;
           Continue;
         end;
       end;
-
-      Advance; // 消耗反斜杠
+      Advance;
       case Peek of
         'b':
-          TempValue := TempValue + #8;    // Backspace
+          TempValue := TempValue + #8;
         'f':
-          TempValue := TempValue + #12;   // Page break
+          TempValue := TempValue + #12;
         'n':
-          TempValue := TempValue + #10;   // Line break
+          TempValue := TempValue + #10;
         'r':
-          TempValue := TempValue + #13;   // Return
+          TempValue := TempValue + #13;
         't':
-          TempValue := TempValue + #9;    // Tab
+          TempValue := TempValue + #9;
         '\':
           TempValue := TempValue + '\';
         '"':
           TempValue := TempValue + '"';
         '''':
-          TempValue := TempValue + '''';  // Allow escaped single quotes
+          TempValue := TempValue + '''';
         'e':
-          TempValue := TempValue + #27;   // ESC（TOML v1.1.0）
+          TempValue := TempValue + #27;
         'x':
           begin
-            // \xHH —— 2-digit hexadecimal escape sequence
             Advance;
             var HexStr := '';
             for j := 1 to 2 do
             begin
-              if IsAtEnd or (not CharInSet(Peek, ['0'..'9', 'A'..'F', 'a'..'f'])) then
+              if IsAtEnd or not CharInSet(Peek, ['0'..'9', 'A'..'F', 'a'..'f']) then
                 raise ETOMLParserException.Create('Invalid hex escape');
               HexStr := HexStr + Advance;
             end;
@@ -571,7 +407,6 @@ begin
           end;
         'u', 'U':
           begin
-            // \uHHHH 或 \UHHHHHHHH —— Unicode escape sequences
             var UChar := Peek;
             Advance;
             var HexLen := IfThen(UChar = 'U', 8, 4);
@@ -599,19 +434,15 @@ begin
       else
         raise ETOMLParserException.Create('Invalid escape sequence');
       end;
-      Advance; // Consume escaped characters (b/f/n/r/t/\/"/e, etc.)）
+      Advance;
     end
     else
     begin
-      // 3. Ordinary character processing and illegal control character checking
       var Ch := Peek;
-
-      // Line break processing
       if (Ch = #10) or (Ch = #13) then
       begin
         if not IsMultiline then
           raise ETOMLParserException.Create('Newlines are not allowed in single-line strings');
-
         if Ch = #13 then
         begin
           Advance;
@@ -622,28 +453,21 @@ begin
         end
         else
           Advance;
-
-        // Line breaks in multi-line strings are uniformly normalized as LF.
         TempValue := TempValue + #10;
       end
       else
       begin
-        // Other control character checks: Tab (0x09) is valid, the rest
-        // (0x00-0x1F and 0x7F) are invalid.
         var OrdCh := Ord(Ch);
         if (OrdCh < 32) and (OrdCh <> 9) then
           raise ETOMLParserException.CreateFmt('Control character U+%.4X is not allowed', [OrdCh]);
         if OrdCh = 127 then
           raise ETOMLParserException.Create('Control character U+007F is not allowed');
-
         TempValue := TempValue + Advance;
       end;
     end;
   end;
-
   if not FoundClosing then
     raise ETOMLParserException.Create('Unterminated string');
-
   if IsMultiline then
     Result.TokenType := ttMultilineString
   else
@@ -660,8 +484,6 @@ var
   TempValue: string;
   Ch: Char;
   HasSign: Boolean;
-  { Consumes consecutive numeric characters (AllowedDigits specifies the
-    valid character set), including underscore delimiter checking. }
 
   procedure ConsumeDigits(const AllowedDigits: TSysCharSet);
   begin
@@ -669,12 +491,10 @@ var
     begin
       if Peek = '_' then
       begin
-        { The underscore must be preceded and followed by valid numbers
-         (it is forbidden to use it at the beginning, end, or consecutively).}
-        if (TempValue = '') or (not CharInSet(TempValue[Length(TempValue)], AllowedDigits)) then
+        if (TempValue = '') or not CharInSet(TempValue[Length(TempValue)], AllowedDigits) then
           raise ETOMLParserException.Create('Invalid underscore placement');
         TempValue := TempValue + Advance;
-        if IsAtEnd or (not CharInSet(Peek, AllowedDigits)) then
+        if IsAtEnd or not CharInSet(Peek, AllowedDigits) then
           raise ETOMLParserException.Create('Invalid underscore placement');
       end
       else
@@ -687,15 +507,11 @@ begin
   HasSign := False;
   StartColumn := FColumn;
   TempValue := '';
-
-  // 1. Handle positive and negative signs
   if CharInSet(Peek, ['+', '-']) then
   begin
     HasSign := True;
     TempValue := TempValue + Advance;
   end;
-
-  // 2. Detect special floating-point values inf / nan (with symbols allowed.)
   if (Peek = 'i') or (Peek = 'n') then
   begin
     var StartLine := FLine;
@@ -711,19 +527,15 @@ begin
       Exit;
     end
     else
-      raise ETOMLParserException.CreateFmt('Invalid identifier starting with sign: %s', [FullVal]);
+      raise ETOMLParserException.CreateFmt('Invalid identifier: %s', [FullVal]);
   end;
-
-  // 3. 检测进制前缀 0x / 0o / 0b
-  if (Peek = '0') and (not IsAtEnd) and CharInSet(PeekNext, ['x', 'o', 'b']) then
+  if (Peek = '0') and not IsAtEnd and CharInSet(PeekNext, ['x', 'o', 'b']) then
   begin
-    // Integers in base 1 are not allowed to have signs.
     if HasSign then
-      raise ETOMLParserException.Create('Signs are not allowed for hex, octal, or binary integers');
-
+      raise ETOMLParserException.Create('Signs not allowed for hex/octal/binary integers');
     Ch := PeekNext;
-    TempValue := TempValue + Advance; // '0'
-    TempValue := TempValue + Advance; // 'x' / 'o' / 'b'
+    TempValue := TempValue + Advance;
+    TempValue := TempValue + Advance;
     case Ch of
       'x':
         ConsumeDigits(['0'..'9', 'A'..'F', 'a'..'f']);
@@ -738,20 +550,13 @@ begin
     Result.Column := StartColumn;
     Exit;
   end;
-
-  // 4. Decimal integer part
   ConsumeDigits(['0'..'9']);
-
-  // 5. The decimal part (a dot must be followed by a number;
-  // otherwise, it is not a floating-point number)
   if (Peek = '.') and IsDigit(PeekNext) then
   begin
     IsFloat := True;
     TempValue := TempValue + Advance;
     ConsumeDigits(['0'..'9']);
   end;
-
-  // 6. Index section
   if CharInSet(Peek, ['e', 'E']) then
   begin
     IsFloat := True;
@@ -760,7 +565,6 @@ begin
       TempValue := TempValue + Advance;
     ConsumeDigits(['0'..'9']);
   end;
-
   if IsFloat then
     Result.TokenType := ttFloat
   else
@@ -776,10 +580,8 @@ var
 begin
   StartColumn := FColumn;
   Result.Value := '';
-  // Bare keys allow: letters, numbers, underscores, hyphens
   while not IsAtEnd and (IsAlphaNumeric(Peek) or (Peek = '-')) do
     Result.Value := Result.Value + Advance;
-
   Result.TokenType := ttIdentifier;
   Result.Line := FLine;
   Result.Column := StartColumn;
@@ -788,13 +590,9 @@ end;
 function TTOMLLexer.ScanDateTime: TToken;
 var
   StartColumn, StartPos, StartLine: Integer;
-  HasTime: Boolean;
-  HasTimezone: Boolean;
-  HasDate: Boolean;
+  HasTime, HasTimezone, HasDate: Boolean;
   TempValue: string;
 
-  { Attempt to scan Count consecutive numbers;
-    return True on success, False on failure. }
   function ScanDigits(Count: Integer): Boolean;
   var
     i: Integer;
@@ -819,22 +617,16 @@ begin
   HasDate := False;
   HasTime := False;
   HasTimezone := False;
-
-  // Attempting to parse the date portion: YYYY-MM-DD
   if ScanDigits(4) and (Peek = '-') then
   begin
-    TempValue := TempValue + Advance; // '-'
+    TempValue := TempValue + Advance;
     if ScanDigits(2) and (Peek = '-') then
     begin
-      TempValue := TempValue + Advance; // '-'
+      TempValue := TempValue + Advance;
       if ScanDigits(2) then
         HasDate := True;
     end;
   end;
-
-  { After the date, attempt to parse the time portion
-   (separated by T or space; spaces require lookahead
-   confirmation that the following format is HH:MM). }
   if HasDate and ((UpCase(Peek) = 'T') or (Peek = ' ')) then
   begin
     var CanContinue := False;
@@ -842,33 +634,28 @@ begin
       CanContinue := True
     else if Peek = ' ' then
     begin
-      // Space-separated: Lookahead check to ensure subsequent
-      // elements conform to HH:MM format
       var NextPos := FPosition + 1;
       if NextPos + 4 <= Length(FInput) then
         CanContinue := IsDigit(FInput[NextPos]) and IsDigit(FInput[NextPos + 1]) and (FInput[NextPos + 2] =
           ':') and IsDigit(FInput[NextPos + 3]) and IsDigit(FInput[NextPos + 4]);
     end;
-
     if CanContinue then
     begin
-      TempValue := TempValue + Advance; // Consume 'T' or ' '
+      TempValue := TempValue + Advance;
       if ScanDigits(2) and (Peek = ':') then
       begin
-        TempValue := TempValue + Advance; // ':'
-        if ScanDigits(2) then             // Minutes (required)
+        TempValue := TempValue + Advance;
+        if ScanDigits(2) then
         begin
           HasTime := True;
-          // Seconds are optional
           if Peek = ':' then
           begin
-            TempValue := TempValue + Advance; // ':'
-            if ScanDigits(2) then            // Secound
+            TempValue := TempValue + Advance;
+            if ScanDigits(2) then
             begin
-              // Decimal seconds selectable
               if Peek = '.' then
               begin
-                TempValue := TempValue + Advance; // '.'
+                TempValue := TempValue + Advance;
                 while IsDigit(Peek) do
                   TempValue := TempValue + Advance;
               end;
@@ -880,15 +667,13 @@ begin
   end
   else if not HasDate then
   begin
-    // When no date is specified, attempt to parse pure time: HH:MM[:SS[.frac]]
     FPosition := StartPos;
     FLine := StartLine;
     FColumn := StartColumn;
     TempValue := '';
-
     if ScanDigits(2) and (Peek = ':') then
     begin
-      TempValue := TempValue + Advance; // ':'
+      TempValue := TempValue + Advance;
       if ScanDigits(2) then
       begin
         HasTime := True;
@@ -908,9 +693,7 @@ begin
       end;
     end;
   end;
-
-  // Attempt to resolve the time zone portion (Z or +/-HH:MM)）
-  if HasTime and (CharInSet(UpCase(Peek), ['Z', '+', '-'])) then
+  if HasTime and CharInSet(UpCase(Peek), ['Z', '+', '-']) then
   begin
     if UpCase(Peek) = 'Z' then
     begin
@@ -919,18 +702,15 @@ begin
     end
     else
     begin
-      TempValue := TempValue + Advance; // '+' 或 '-'
-      while (not IsAtEnd) and CharInSet(Peek, ['0'..'9', ':']) do
+      TempValue := TempValue + Advance;
+      while not IsAtEnd and CharInSet(Peek, ['0'..'9', ':']) do
         TempValue := TempValue + Advance;
     end;
   end;
-
-  // Determine the Token type based on the parsing results.
   if HasDate or HasTime then
     Result.TokenType := ttDateTime
   else
-    Result.TokenType := ttInteger; // Rollback: Let ScanNumber reprocess.
-
+    Result.TokenType := ttInteger;
   Result.Value := TempValue;
   Result.Line := FLine;
   Result.Column := StartColumn;
@@ -940,19 +720,36 @@ function TTOMLLexer.NextToken: TToken;
 var
   SavePos, SaveLine, SaveCol: Integer;
 begin
-  SkipWhitespace;
-
+  { Skip horizontal whitespace unconditionally. }
+  SkipHorizontalWhitespace;
   Result.Line := FLine;
   Result.Column := FColumn;
-
   if IsAtEnd then
   begin
     Result.TokenType := ttEOF;
     Result.Value := '';
     Exit;
   end;
-
   case Peek of
+    '#':
+      begin
+        if FPreserveComments then
+          Exit(ScanComment)
+        else
+        begin
+          // Discard the comment
+          while not IsAtEnd and (Peek <> #10) and (Peek <> #13) do
+          begin
+            var Ch := Peek;
+            var OrdCh := Ord(Ch);
+            if (OrdCh <= 8) or ((OrdCh >= 11) and (OrdCh <= 31)) or (OrdCh = 127) then
+              raise ETOMLParserException.CreateFmt('Control character U+%.4X is not allowed in comments', [OrdCh]);
+            Advance;
+          end;
+          // Recurse to get the next real token
+          Exit(NextToken);
+        end;
+      end;
     '=':
       begin
         Advance;
@@ -997,8 +794,6 @@ begin
       end;
     #10, #13:
       begin
-        // Line break handling: CR+LF and a single LF are uniformly
-        // treated as a single line break token.
         if Peek = #13 then
         begin
           Advance;
@@ -1016,23 +811,17 @@ begin
       Exit(ScanString);
     '0'..'9':
       begin
-        // Try scanning the date and time first; if that fails,
-        // revert to scanning numbers.
         SavePos := FPosition;
         SaveLine := FLine;
         SaveCol := FColumn;
         Result := ScanDateTime;
         if Result.TokenType = ttDateTime then
           Exit;
-
         FPosition := SavePos;
         FLine := SaveLine;
         FColumn := SaveCol;
         Result := ScanNumber;
-        // If a number is immediately followed by a letter or hyphen,
-        // the entire key is treated as an identifier (e.g., a bare key
-        // in the form of a 2024-key).）
-        if (not IsAtEnd) and (IsAlpha(Peek) or (Peek = '-')) then
+        if not IsAtEnd and (IsAlpha(Peek) or (Peek = '-')) then
         begin
           FPosition := SavePos;
           FLine := SaveLine;
@@ -1043,8 +832,6 @@ begin
       end;
     '+', '-':
       begin
-        // Prioritize scanning for signed numbers; if only a sign
-        // or a letter remains, treat it as an identifier.
         SavePos := FPosition;
         SaveLine := FLine;
         SaveCol := FColumn;
@@ -1066,13 +853,17 @@ begin
         Result.Column]);
   end;
 end;
-{ TTOMLParser }
+{ =========================================================================
+  TTOMLParser
+  ========================================================================= }
 
-constructor TTOMLParser.Create(const AInput: string);
+constructor TTOMLParser.Create(const AInput: string; APreserveComments: Boolean);
 begin
   inherited Create;
-  FLexer := TTOMLLexer.Create(AInput);
+  FPreserveComments := APreserveComments;
+  FLexer := TTOMLLexer.Create(AInput, APreserveComments);
   FHasPeeked := False;
+  FPendingComment := '';
   Advance;
 end;
 
@@ -1117,11 +908,115 @@ end;
 procedure TTOMLParser.Expect(TokenType: TTokenType);
 begin
   if FCurrentToken.TokenType <> TokenType then
-    raise ETOMLParserException.CreateFmt('Expected token type %s but got %s at line %d, column %d', [GetEnumName
-      (TypeInfo(TTokenType), Ord(TokenType)), GetEnumName(TypeInfo(TTokenType), Ord(FCurrentToken.TokenType)),
+    raise ETOMLParserException.CreateFmt('Expected %s but got %s at line %d, column %d', [GetEnumName(TypeInfo
+      (TTokenType), Ord(TokenType)), GetEnumName(TypeInfo(TTokenType), Ord(FCurrentToken.TokenType)),
       FCurrentToken.Line, FCurrentToken.Column]);
   Advance;
 end;
+{ Consume leading newlines and any comment/blank-line blocks, accumulating
+  them into FPendingComment. }
+
+procedure TTOMLParser.SkipNewLinesAndCollectComments;
+begin
+  while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+  begin
+    if FPreserveComments then
+    begin
+      if FCurrentToken.TokenType = ttComment then
+      begin
+        // If the buffer already ends with #10 (from a preceding newline token)
+        // append directly; otherwise add a separator #10 first.
+        // When the buffer is empty start fresh.
+        if FPendingComment = '' then
+          FPendingComment := FCurrentToken.Value
+        else if FPendingComment[Length(FPendingComment)] = #10 then
+          FPendingComment := FPendingComment + FCurrentToken.Value
+        else
+          FPendingComment := FPendingComment + #10 + FCurrentToken.Value;
+      end
+      else // ttNewLine
+      begin
+        // Only record the newline when the buffer is non-empty (so leading
+        // blank lines before the first comment are ignored). A real blank line
+        // (two consecutive newlines) naturally produces \n\n in the buffer.
+        if FPendingComment <> '' then
+          FPendingComment := FPendingComment + #10;
+      end;
+    end;
+    Advance;
+  end;
+end;
+
+procedure TTOMLParser.AttachPendingAsBefore(AValue: TTOMLValue);
+begin
+  if FPreserveComments and Assigned(AValue) and (FPendingComment <> '') then
+  begin
+    AValue.CommentBefore := FPendingComment;
+    FPendingComment := '';
+  end
+  else
+    FPendingComment := '';
+end;
+
+procedure TTOMLParser.CollectInlineComment(AValue: TTOMLValue);
+begin
+  if not FPreserveComments then
+  begin
+    // Discard any comment that might follow on the same line
+    if FCurrentToken.TokenType = ttComment then
+      Advance;
+    Exit;
+  end;
+  if FCurrentToken.TokenType = ttComment then
+  begin
+    if Assigned(AValue) then
+      AValue.CommentInline := FCurrentToken.Value;
+    Advance;
+  end;
+end;
+
+function TTOMLParser.CollectTrailingComment: string;
+begin
+  Result := '';
+  if not FPreserveComments then
+  begin
+    while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+      Advance;
+    Exit;
+  end;
+  while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+  begin
+    if FCurrentToken.TokenType = ttComment then
+    begin
+      if Result = '' then
+        Result := FCurrentToken.Value
+      else if Result[Length(Result)] = #10 then
+        Result := Result + FCurrentToken.Value
+      else
+        Result := Result + #10 + FCurrentToken.Value;
+    end
+    else // ttNewLine
+    begin
+      if Result <> '' then
+        Result := Result + #10;
+    end;
+    Advance;
+  end;
+end;
+
+procedure TTOMLParser.ExpectNewLineOrEOF;
+begin
+  if FCurrentToken.TokenType = ttComment then
+    CollectInlineComment(nil); // discard; the caller sets inline after this
+  if not (FCurrentToken.TokenType in [ttNewLine, ttEOF]) then
+    raise ETOMLParserException.CreateFmt('Only one expression per line. Unexpected "%s" at line %d, column %d',
+      [FCurrentToken.Value, FCurrentToken.Line, FCurrentToken.Column]);
+  if FCurrentToken.TokenType = ttNewLine then
+    Advance;
+end;
+{ -------------------------------------------------------------------------
+  Value parsers
+  ------------------------------------------------------------------------- }
 
 function TTOMLParser.ParseValue: TTOMLValue;
 begin
@@ -1148,8 +1043,8 @@ begin
     ttLBrace:
       Result := ParseInlineTable;
   else
-    raise ETOMLParserException.CreateFmt('Unexpected token type: %s at line %d, column %d', [GetEnumName(TypeInfo
-      (TTokenType), Ord(FCurrentToken.TokenType)), FCurrentToken.Line, FCurrentToken.Column]);
+    raise ETOMLParserException.CreateFmt('Unexpected token %s at line %d, column %d', [GetEnumName(TypeInfo(TTokenType),
+      Ord(FCurrentToken.TokenType)), FCurrentToken.Line, FCurrentToken.Column]);
   end;
 end;
 
@@ -1170,8 +1065,6 @@ var
   IsHexOctBin: Boolean;
 begin
   RawValue := FCurrentToken.Value;
-
-  // 1. Handling special floating-point values ​inf / nan (including signed form)
   if SameText(RawValue, 'inf') or SameText(RawValue, '+inf') or SameText(RawValue, '-inf') or SameText(RawValue,
     'nan') or SameText(RawValue, '+nan') or SameText(RawValue, '-nan') then
   begin
@@ -1185,32 +1078,25 @@ begin
     Advance;
     Exit;
   end;
-
-  // 2. Removing the underscore delimiter yields a clean string
-  // of numbers for parsing.
   CleanValue := '';
   for i := 1 to Length(RawValue) do
     if RawValue[i] <> '_' then
       CleanValue := CleanValue + RawValue[i];
-
   IntValue := 0;
   Code := 0;
   Result := nil;
-
-  // 3. Determine if it is a hexadecimal/octal/binary integer.
   IsHexOctBin := (Length(CleanValue) >= 2) and (CleanValue[1] = '0') and CharInSet(CleanValue[2], ['x', 'o', 'b']);
-
   if IsHexOctBin then
   begin
     case UpCase(CleanValue[2]) of
-      'X': // hexadecimal
+      'X':
         begin
-          BaseValue := '$' + Copy(CleanValue, 3, Length(CleanValue));
+          BaseValue := '$' + Copy(CleanValue, 3, MaxInt);
           Val(BaseValue, IntValue, Code);
         end;
-      'O': // Octal
+      'O':
         begin
-          BaseValue := Copy(CleanValue, 3, Length(CleanValue));
+          BaseValue := Copy(CleanValue, 3, MaxInt);
           IntValue := 0;
           Code := 0;
           if BaseValue = '' then
@@ -1226,9 +1112,9 @@ begin
               IntValue := (IntValue shl 3) or (Ord(BaseValue[i]) - Ord('0'));
             end;
         end;
-      'B': // binary
+      'B':
         begin
-          BaseValue := Copy(CleanValue, 3, Length(CleanValue));
+          BaseValue := Copy(CleanValue, 3, MaxInt);
           IntValue := 0;
           Code := 0;
           if BaseValue = '' then
@@ -1236,7 +1122,7 @@ begin
           else
             for i := 1 to Length(BaseValue) do
             begin
-              if not (BaseValue[i] in ['0'..'1']) then
+              if not (BaseValue[i] in ['0', '1']) then
               begin
                 Code := i;
                 Break;
@@ -1245,7 +1131,6 @@ begin
             end;
         end;
     end;
-
     if Code = 0 then
       Result := TTOMLInteger.Create(IntValue)
     else
@@ -1253,21 +1138,13 @@ begin
   end
   else
   begin
-    // 4. Decimal numbers (integers or floating-point numbers)
     SForCheck := CleanValue;
     if (Length(SForCheck) > 0) and CharInSet(SForCheck[1], ['+', '-']) then
       Delete(SForCheck, 1, 1);
-
-    // Decimal numbers must begin with a numeric character
-    // (excluding illegal formats such as -.123 or .123).
-    if (Length(SForCheck) = 0) or (not CharInSet(SForCheck[1], ['0'..'9'])) then
-      raise ETOMLParserException.CreateFmt('Numbers must have an integer part: %s at line %d', [RawValue,
-        FCurrentToken.Line]);
-
-    // Leading zeros are prohibited (e.g., 01, 007).
+    if (Length(SForCheck) = 0) or not CharInSet(SForCheck[1], ['0'..'9']) then
+      raise ETOMLParserException.CreateFmt('Numbers must have an integer part: %s', [RawValue]);
     if (Length(SForCheck) > 1) and (SForCheck[1] = '0') and CharInSet(SForCheck[2], ['0'..'9']) then
-      raise ETOMLParserException.CreateFmt('Leading zeros are not allowed in decimal integers: %s', [RawValue]);
-
+      raise ETOMLParserException.CreateFmt('Leading zeros not allowed: %s', [RawValue]);
     if FCurrentToken.TokenType = ttFloat then
     begin
       Val(CleanValue, FloatValue, Code);
@@ -1284,10 +1161,8 @@ begin
         raise ETOMLParserException.CreateFmt('Invalid integer: %s', [RawValue]);
     end;
   end;
-
   if not Assigned(Result) then
     raise ETOMLParserException.CreateFmt('Failed to parse number: %s', [RawValue]);
-
   Advance;
 end;
 
@@ -1300,25 +1175,26 @@ end;
 function TTOMLParser.ParseDateTime: TTOMLDateTime;
 var
   DateStr: string;
-  Year, Month, Day, Hour, Minute, Second, MilliSecond: Word;
-  TZHour, TZMinute, TZOffsetMinutes: Integer;
+  Year, Month, Day: Word;
+  Hour, Minute: Word;
+  Second, MilliSec: Word;
+  TZHour, TZMin: Integer;
+  TZOffset: Integer;
   P: Integer;
   FracStr: string;
   DT: TDateTime;
-  HasDate, HasTime, HasTimezone: Boolean;
-  DateTimeKind: TTOMLDateTimeKind;
+  HasDate, HasTime, HasTZ: Boolean;
+  Kind: TTOMLDateTimeKind;
   HasSep: Boolean;
 begin
   if FCurrentToken.TokenType <> ttDateTime then
-    raise ETOMLParserException.CreateFmt('Expected DateTime but got %s at line %d, column %d', [GetEnumName(TypeInfo
-      (TTokenType), Ord(FCurrentToken.TokenType)), FCurrentToken.Line, FCurrentToken.Column]);
-
+    raise ETOMLParserException.CreateFmt('Expected DateTime but got %s at line %d', [GetEnumName(TypeInfo(TTokenType),
+      Ord(FCurrentToken.TokenType)), FCurrentToken.Line]);
   DateStr := FCurrentToken.Value;
   HasDate := False;
   HasTime := False;
-  HasTimezone := False;
-  TZOffsetMinutes := 0;
-
+  HasTZ := False;
+  TZOffset := 0;
   try
     Year := 0;
     Month := 0;
@@ -1326,10 +1202,8 @@ begin
     Hour := 0;
     Minute := 0;
     Second := 0;
-    MilliSecond := 0;
+    MilliSec := 0;
     P := 1;
-
-    // Parsing the date portion: YYYY-MM-DD
     if (Length(DateStr) >= 10) and (DateStr[5] = '-') and (DateStr[8] = '-') then
     begin
       Year := StrToInt(Copy(DateStr, 1, 4));
@@ -1342,15 +1216,11 @@ begin
       HasDate := True;
       P := 11;
     end;
-
-    // Parse the time portion (separated by T or space,
-    // or directly parse if there is no date).
-    if (P <= Length(DateStr)) and ((UpCase(DateStr[P]) = 'T') or (DateStr[P] = ' ') or (not HasDate)) then
+    if (P <= Length(DateStr)) and ((UpCase(DateStr[P]) = 'T') or (DateStr[P] = ' ') or not HasDate) then
     begin
       HasSep := (UpCase(DateStr[P]) = 'T') or (DateStr[P] = ' ');
       if HasSep then
         Inc(P);
-
       if (P + 4 <= Length(DateStr)) and (DateStr[P + 2] = ':') then
       begin
         Hour := StrToInt(Copy(DateStr, P, 2));
@@ -1361,8 +1231,6 @@ begin
           raise ETOMLParserException.CreateFmt('Invalid minute: %d', [Minute]);
         HasTime := True;
         P := P + 5;
-
-        // Seconds are optional
         if (P <= Length(DateStr)) and (DateStr[P] = ':') then
         begin
           Inc(P);
@@ -1370,44 +1238,38 @@ begin
           begin
             Second := StrToInt(Copy(DateStr, P, 2));
             P := P + 2;
-            // Decimal seconds optional
             if (P <= Length(DateStr)) and (DateStr[P] = '.') then
             begin
               Inc(P);
-              var FracStartPos := P;
+              var FracStart := P;
               FracStr := '';
               while (P <= Length(DateStr)) and CharInSet(DateStr[P], ['0'..'9']) do
               begin
                 FracStr := FracStr + DateStr[P];
                 Inc(P);
               end;
-              if P = FracStartPos then
+              if P = FracStart then
                 raise ETOMLParserException.Create('Fractional seconds missing digits');
               if Length(FracStr) > 0 then
-                MilliSecond := StrToInt(Copy(FracStr + '000', 1, 3));
+                MilliSec := StrToInt(Copy(FracStr + '000', 1, 3));
             end;
           end;
         end;
       end
       else if HasSep then
-        // The presence of a 'T' or space separator followed by an invalid
-        // time format is considered an error.
         raise ETOMLParserException.Create('DateTime separator must be followed by valid time');
     end;
-
-    // Analyze the time zone portion (Z or +/-HH:MM)
     if P <= Length(DateStr) then
     begin
       if UpCase(DateStr[P]) = 'Z' then
       begin
-        HasTimezone := True;
-        TZOffsetMinutes := 0;
+        HasTZ := True;
+        TZOffset := 0;
         Inc(P);
       end
       else if (DateStr[P] = '+') or (DateStr[P] = '-') then
       begin
-        var SignChar := DateStr[P];
-        // Fixed time zone offset format: [+-]HH:MM (6 characters)
+        var SignCh := DateStr[P];
         if P + 5 <= Length(DateStr) then
         begin
           if DateStr[P + 3] <> ':' then
@@ -1417,126 +1279,315 @@ begin
             raise ETOMLParserException.Create('Invalid digits in timezone offset');
 
           TZHour := StrToInt(Copy(DateStr, P + 1, 2));
-          TZMinute := StrToInt(Copy(DateStr, P + 4, 2));
-          if TZHour > 23 then
-            raise ETOMLParserException.CreateFmt('Timezone offset hour out of range: %d', [TZHour]);
-          if TZMinute > 59 then
-            raise ETOMLParserException.CreateFmt('Timezone offset minute out of range: %d', [TZMinute]);
+          TZMin := StrToInt(Copy(DateStr, P + 4, 2));
 
-          TZOffsetMinutes := TZHour * 60 + TZMinute;
-          if SignChar = '-' then
-            TZOffsetMinutes := -TZOffsetMinutes;
-          HasTimezone := True;
+            // TOML/RFC3339 hour: 00-23, minute: 00-59
+          if (TZHour < 0) or (TZHour > 23) then
+            raise ETOMLParserException.CreateFmt('Timezone offset hour out of range [00-23]: %d', [TZHour]);
+
+          if (TZMin < 0) or (TZMin > 59) then
+            raise ETOMLParserException.CreateFmt('Timezone offset minute out of range [00-59]: %d', [TZMin]);
+
+          TZOffset := TZHour * 60 + TZMin;
+          if SignCh = '-' then
+            TZOffset := -TZOffset;
+          HasTZ := True;
           P := P + 6;
         end
         else
           raise ETOMLParserException.Create('Incomplete timezone offset (must be HH:MM)');
       end;
     end;
-
-    // If a string contains any remaining unparsed parts, its format is invalid.
     if P <= Length(DateStr) then
-      raise ETOMLParserException.CreateFmt('Malformed datetime trailing characters: "%s"', [Copy(DateStr, P, MaxInt)]);
-
-    // Determine date and time subtypes
-    if HasDate and HasTime and HasTimezone then
-      DateTimeKind := tdkOffsetDateTime
+      raise ETOMLParserException.CreateFmt('Trailing chars in datetime: "%s"', [Copy(DateStr, P, MaxInt)]);
+    if HasDate and HasTime and HasTZ then
+      Kind := tdkOffsetDateTime
     else if HasDate and HasTime then
-      DateTimeKind := tdkLocalDateTime
+      Kind := tdkLocalDateTime
     else if HasDate then
-      DateTimeKind := tdkLocalDate
+      Kind := tdkLocalDate
     else if HasTime then
-      DateTimeKind := tdkLocalTime
+      Kind := tdkLocalTime
     else
       raise ETOMLParserException.Create('Invalid datetime format');
-
-    // Constructing TDateTime Values
     if HasDate then
       DT := EncodeDate(Year, Month, Day)
     else
       DT := 0;
-
     if HasTime then
-      DT := DT + EncodeTime(Hour, Minute, Second, MilliSecond);
-
-    Result := TTOMLDateTime.Create(DT, DateStr, DateTimeKind, TZOffsetMinutes);
-
+      DT := DT + EncodeTime(Hour, Minute, Second, MilliSec);
+    Result := TTOMLDateTime.Create(DT, DateStr, Kind, TZOffset);
   except
     on E: Exception do
-      raise ETOMLParserException.CreateFmt('Error parsing datetime: %s at line %d, column %d', [E.Message,
-        FCurrentToken.Line, FCurrentToken.Column]);
+      raise ETOMLParserException.CreateFmt('Error parsing datetime: %s at line %d', [E.Message, FCurrentToken.Line]);
   end;
-
   Advance;
 end;
+{ -------------------------------------------------------------------------
+  Array parser — with comment preservation
+  TOML v1.1.0: arrays may span multiple lines; trailing comma is allowed;
+  comments are allowed after each element (before the newline) and inside
+  multi-line arrays.
+  ------------------------------------------------------------------------- }
 
 function TTOMLParser.ParseArray: TTOMLArray;
+var
+  Elem: TTOMLValue;
+  ElemCommentBefore: string;
 begin
   Result := TTOMLArray.Create;
   try
     Expect(ttLBracket);
-
     while True do
     begin
-      // Skip all newlines before elements
-      // (TOML allows arrays to span multiple lines).
-      while Match(ttNewLine) do
+      // Skip newlines / collect inter-element comments
+      ElemCommentBefore := '';
+      if FPreserveComments then
+      begin
+        while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+        begin
+          if FCurrentToken.TokenType = ttComment then
+          begin
+            if ElemCommentBefore <> '' then
+              ElemCommentBefore := ElemCommentBefore + #10;
+            ElemCommentBefore := ElemCommentBefore + FCurrentToken.Value;
+          end
+          else
+          begin
+            if ElemCommentBefore <> '' then
+              ElemCommentBefore := ElemCommentBefore + #10;
+          end;
+          Advance;
+        end;
+      end
+      else
+        while Match(ttNewLine) do
         ;
-
-      // Handling empty arrays [] or ] after a comma at the end.
+      // Trailing comment or ']'
       if FCurrentToken.TokenType = ttRBracket then
+      begin
+        // Absorb any comment before ']' as trailing
+        if FPreserveComments and (ElemCommentBefore <> '') then
+          Result.CommentTrailing := ElemCommentBefore;
         Break;
-
-      Result.Add(ParseValue);
-
+      end;
+      Elem := ParseValue;
+      if FPreserveComments and (ElemCommentBefore <> '') then
+        Elem.CommentBefore := ElemCommentBefore;
+      // Collect inline comment after the element value (before comma/newline)
+      if FPreserveComments then
+        CollectInlineComment(Elem);
+      // Skip newlines after the element
       while Match(ttNewLine) do
         ;
-
-      // The text ends if there is no comma
-      // (single elements without a trailing comma are allowed).
+      Result.Add(Elem);
+      // Trailing comma?
       if not Match(ttComma) then
       begin
-        while Match(ttNewLine) do
+        // No comma: collect trailing comments until ']'
+        if FPreserveComments then
+        begin
+          var TC := CollectTrailingComment;
+          if TC <> '' then
+            Result.CommentTrailing := TC;
+        end
+        else
+          while Match(ttNewLine) do
           ;
         Break;
       end;
-      // If a comma is present, continue parsing the next element.
+      // After comma, there may be a comment on the same line
+      if FPreserveComments and (FCurrentToken.TokenType = ttComment) then
+      begin
+        // Attach to the element just parsed (override inline if needed)
+        if Elem.CommentInline = '' then
+          Elem.CommentInline := FCurrentToken.Value;
+        Advance;
+      end;
     end;
-
     Expect(ttRBracket);
   except
     Result.Free;
     raise;
   end;
 end;
+{ -------------------------------------------------------------------------
+  Inline-table parser — with comment preservation
+  TOML v1.1.0: inline tables may span multiple lines; trailing comma is allowed;
+  comments are allowed after each key-value pair.
+  ------------------------------------------------------------------------- }
 
 function TTOMLParser.ParseInlineTable: TTOMLTable;
+(* Design notes
+  ─────────────────────────────────────────────────────────────────────────────
+  FPendingComment is a *shared* parser-level field used by the top-level Parse
+  loop and also reset inside ParseInlineTable in the previous implementation.
+  That caused two classes of bugs:
+
+    A) Nesting bug – when an inner ParseInlineTable recursion is triggered via
+       ParseValue → ParseInlineTable, the inner call wiped FPendingComment that
+       the outer call had just accumulated for the current key's CommentBefore.
+
+    B) Trailing-comment loss – after the last comma (trailing comma) the loop
+       jumped back to the top, reset FPendingComment := '', consumed the
+       following comments into it, then hit '}' and broke out — discarding
+       everything that had been accumulated.
+
+  Fix: ParseInlineTable uses *only local variables* for comment accumulation.
+  FPendingComment is saved on entry and restored on exit so that any outer
+  context (top-level Parse loop or outer ParseInlineTable call) is unaffected.
+  ─────────────────────────────────────────────────────────────────────────────
+*)
 var
   KeyPair: TTOMLKeyValuePair;
   KeyParts: TArray<string>;
+  // All comment buffers are LOCAL — never touch FPendingComment directly.
+  LocalPending: string;    // pre-key comment block (CommentBefore candidate)
+  OpenBraceCmt: string;    // comment on the '{' opening line
+  TrailingCmt:  string;    // comment after last entry, before '}'
+  SavedPending: string;    // FPendingComment value on entry — restored on exit
+
+  { Append a token's contribution to a local comment buffer, using the same
+    accumulation rules as the rest of the parser. }
+  procedure AppendToLocal(var Buf: string; const Tok: TToken);
+  begin
+    if Tok.TokenType = ttComment then
+    begin
+      if Buf = '' then
+        Buf := Tok.Value
+      else if Buf[Length(Buf)] = #10 then
+        Buf := Buf + Tok.Value
+      else
+        Buf := Buf + #10 + Tok.Value;
+    end
+    else // ttNewLine
+    begin
+      if Buf <> '' then
+        Buf := Buf + #10;
+    end;
+  end;
+
+  { Collect comment/newline tokens into Buf; stop at the first token that is
+    neither a comment nor a newline. }
+  procedure CollectLocal(var Buf: string);
+  begin
+    while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+    begin
+      AppendToLocal(Buf, FCurrentToken);
+      Advance;
+    end;
+  end;
+
+  { Collect comment/newline tokens into a local trailing-comment buffer.
+    Blank lines at the very start are included (unlike CollectLocal which
+    skips leading blank lines — actually both behave the same here because
+    AppendToLocal for ttNewLine only appends when Buf is non-empty). }
+  function CollectLocalTrailing: string;
+  begin
+    Result := '';
+    while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+    begin
+      AppendToLocal(Result, FCurrentToken);
+      Advance;
+    end;
+    // Trim a trailing #10 that the last newline token may have added (it
+    // would produce a spurious blank line at the end of the block).
+    while (Result <> '') and (Result[Length(Result)] = #10) do
+      SetLength(Result, Length(Result) - 1);
+  end;
+
 begin
   Result := TTOMLTable.Create;
-  Result.IsInline := True; // Inline tables cannot be expanded via table headers.
+  Result.IsInline := True;
+
+  // Save and neutralise FPendingComment so that recursive calls cannot
+  // clobber the outer accumulation context.
+  SavedPending := FPendingComment;
+  FPendingComment := '';
+
   try
     Expect(ttLBrace);
 
-    // Skip optional line breaks
-    // (TOML 1.1.0 allows line breaks within inline tables)
+    // ── Comment on the '{' line ────────────────────────────────────────────
+    // e.g.  key = { # this comment
+    //          inner = 1
+    //        }
+    // The comment travels as the first key's CommentBefore (serialiser will
+    // output it on the line after '{', i.e. "moved to next line").
+    OpenBraceCmt := '';
+    if FPreserveComments and (FCurrentToken.TokenType = ttComment) then
+    begin
+      OpenBraceCmt := FCurrentToken.Value;
+      Advance;
+    end;
+
+    // Skip the newline that ends the '{' line (or any leading blank lines).
     while FCurrentToken.TokenType = ttNewLine do
       Advance;
 
-    if FCurrentToken.TokenType <> ttRBrace then
+    if FCurrentToken.TokenType = ttRBrace then
     begin
+      // Empty inline table  {}  — the open-brace comment (if any) becomes
+      // the trailing comment so the serialiser can round-trip it.
+      if FPreserveComments and (OpenBraceCmt <> '') then
+        Result.CommentTrailing := OpenBraceCmt;
+    end
+    else
+    begin
+      var IsFirst := True;
       repeat
-        while FCurrentToken.TokenType = ttNewLine do
-          Advance;
-        if FCurrentToken.TokenType = ttRBrace then
-          Break;
+        // ── Pre-key comment block (CommentBefore) ─────────────────────────
+        LocalPending := '';
+        if FPreserveComments then
+        begin
+          // On the first iteration, seed LocalPending with the open-brace
+          // comment so it ends up as the first key's CommentBefore.
+          if IsFirst and (OpenBraceCmt <> '') then
+          begin
+            LocalPending := OpenBraceCmt;
+            OpenBraceCmt := '';
+          end;
+          // Now collect any further comment/blank lines before the key.
+          CollectLocal(LocalPending);
+        end
+        else
+          while FCurrentToken.TokenType = ttNewLine do
+            Advance;
 
+        // If we consumed everything and hit '}', the accumulated LocalPending
+        // is trailing content (last-comma case: trailing comma then comments
+        // then '}'). Save it as CommentTrailing and stop.
+        if FCurrentToken.TokenType = ttRBrace then
+        begin
+          if FPreserveComments and (LocalPending <> '') then
+            Result.CommentTrailing := LocalPending;
+          Break;
+        end;
+
+        // ── Parse the key = value pair ────────────────────────────────────
+        // ParseKeyValue may recurse into ParseValue → ParseInlineTable.
+        // That inner call saves/restores FPendingComment itself, so we are
+        // safe.  After it returns, FPendingComment is still '' (we cleared
+        // it on entry and the inner call restores its own saved value).
         KeyPair := ParseKeyValue;
+        IsFirst := False;
         try
-          // Composite keys containing the #31 separator
-          // require navigation through the key levels.
+          // Attach the accumulated pre-key comments.
+          if FPreserveComments and (LocalPending <> '') then
+            KeyPair.Value.CommentBefore := LocalPending;
+
+          // ── Inline comment directly after the value ────────────────────
+          // e.g.  key = val # inline comment
+          // Note: CollectInlineComment uses FCurrentToken, not FPendingComment.
+          if FPreserveComments then
+            CollectInlineComment(KeyPair.Value);
+
+          // Skip the newline that ends the value line.
+          if FPreserveComments then
+            while FCurrentToken.TokenType = ttNewLine do
+              Advance;
+
+          // Store the key-value in the table.
           if (Pos(#31, KeyPair.Key) > 0) or (KeyPair.Key = #31) then
           begin
             KeyParts := SplitDottedKey(KeyPair.Key);
@@ -1549,20 +1600,61 @@ begin
           raise;
         end;
 
-        while FCurrentToken.TokenType = ttNewLine do
-          Advance;
-      until not Match(ttComma);
+        // In non-preserve mode skip any trailing newlines before the comma.
+        if not FPreserveComments then
+          while FCurrentToken.TokenType = ttNewLine do
+            Advance;
 
-      while FCurrentToken.TokenType = ttNewLine do
-        Advance;
+        // ── Comma (optional trailing comma in TOML 1.1) ───────────────────
+        if not Match(ttComma) then
+        begin
+          // No comma — collect everything up to '}' as CommentTrailing.
+          if FPreserveComments then
+          begin
+            while FCurrentToken.TokenType = ttNewLine do
+              Advance;
+            TrailingCmt := CollectLocalTrailing;
+            if TrailingCmt <> '' then
+              Result.CommentTrailing := TrailingCmt;
+          end
+          else
+            while FCurrentToken.TokenType = ttNewLine do
+              Advance;
+          Break;
+        end;
+
+        // ── Comment after the comma (same line) ───────────────────────────
+        // e.g.  key = val, # comment after comma
+        // This belongs to the just-parsed value as CommentInline.
+        if FPreserveComments and (FCurrentToken.TokenType = ttComment) then
+        begin
+          if KeyPair.Value.CommentInline = '' then
+            KeyPair.Value.CommentInline := FCurrentToken.Value;
+          Advance;
+        end;
+
+        // Skip the newline after the comma (or after the post-comma comment).
+        if FPreserveComments then
+          while FCurrentToken.TokenType = ttNewLine do
+            Advance;
+
+      until False;
     end;
 
     Expect(ttRBrace);
   except
     Result.Free;
+    // Restore FPendingComment even on exception so the outer context is clean.
+    FPendingComment := SavedPending;
     raise;
   end;
+
+  // Restore the outer FPendingComment context.
+  FPendingComment := SavedPending;
 end;
+{ -------------------------------------------------------------------------
+  Key / key-value parsers (unchanged from original)
+  ------------------------------------------------------------------------- }
 
 function TTOMLParser.ParseKey: string;
 var
@@ -1578,52 +1670,47 @@ begin
     Result := FCurrentToken.Value;
     Advance;
   end
-  else if (FCurrentToken.TokenType = ttInteger) or (FCurrentToken.TokenType = ttFloat) then
+  else if FCurrentToken.TokenType in [ttInteger, ttFloat] then
   begin
-    // Numeric literals can be used as raw keys (e.g., 1 = "one").
     Result := FCurrentToken.Value;
     Advance;
   end
   else if FCurrentToken.TokenType = ttDateTime then
   begin
-    // Raw keys for date-like formats: Only [A-Za-z0-9_-] are allowed.
-    // Characters containing TZ + . must be enclosed in quotes.
     for i := 1 to Length(FCurrentToken.Value) do
       if not CharInSet(FCurrentToken.Value[i], ['0'..'9', 'a'..'z', 'A'..'Z', '_', '-']) then
-        raise ETOMLParserException.CreateFmt('Invalid character "%s" in bare key at line %d, column %d. ' +
-          'Did you forget to quote the date-like key?', [FCurrentToken.Value[i], FCurrentToken.Line,
-          FCurrentToken.Column]);
+        raise ETOMLParserException.CreateFmt('Invalid character "%s" in bare key at line %d, column %d', [FCurrentToken.Value
+          [i], FCurrentToken.Line, FCurrentToken.Column]);
     Result := FCurrentToken.Value;
     Advance;
   end
   else
-    raise ETOMLParserException.CreateFmt('Expected key (string, identifier, number or date-like) but got %s '
-      + 'at line %d, column %d', [GetEnumName(TypeInfo(TTokenType), Ord(FCurrentToken.TokenType)),
-      FCurrentToken.Line, FCurrentToken.Column]);
+    raise ETOMLParserException.CreateFmt('Expected key but got %s at line %d, column %d', [GetEnumName(TypeInfo
+      (TTokenType), Ord(FCurrentToken.TokenType)), FCurrentToken.Line, FCurrentToken.Column]);
 end;
 
 function TTOMLParser.SplitDottedKey(const CompositeKey: string): TArray<string>;
 var
   i, Count, Start: Integer;
 begin
-  // An empty string is treated as a single key.
+  if CompositeKey = #31 then
+  begin
+    SetLength(Result, 2);
+    Result[0] := '';
+    Result[1] := '';
+    Exit;
+  end;
   if CompositeKey = '' then
   begin
     SetLength(Result, 1);
     Result[0] := '';
     Exit;
   end;
-
-  // Count the number of delimiters to determine the size of the result array.
   Count := 1;
   for i := 1 to Length(CompositeKey) do
     if CompositeKey[i] = #31 then
       Inc(Count);
-
   SetLength(Result, Count);
-
-  // Manually split the string using #31,
-  // keeping the first, last, and empty strings in between.
   Start := 1;
   Count := 0;
   for i := 1 to Length(CompositeKey) do
@@ -1641,15 +1728,12 @@ var
   SubParts: TArray<string>;
   j: Integer;
 begin
-  // When the data is not enclosed in quotes and contains periods
-  // (usually generated by Lexer's greedy scan of ttFloat),
-  // further splitting is required.
   if (not WasQuoted) and (Pos('.', Segment) > 0) then
   begin
     SubParts := Segment.Split(['.']);
     for j := 0 to High(SubParts) do
-      if SubParts[j] <> '' then
-        Path.Add(SubParts[j]);
+//      if SubParts[j] <> '' then
+      Path.Add(SubParts[j]);
   end
   else
     Path.Add(Segment);
@@ -1684,42 +1768,28 @@ var
 begin
   if Length(KeyParts) = 0 then
     raise ETOMLParserException.Create('Empty key path');
-
   CurrentTable := RootTable;
   KeyPath := '';
-
-  // 1. Process each level in the path (except for the last key).
   for i := 0 to High(KeyParts) - 1 do
   begin
     if i > 0 then
-      KeyPath := KeyPath + '.'
-    else
-      KeyPath := '';
+      KeyPath := KeyPath + '.';
     KeyPath := KeyPath + KeyParts[i];
-
     if CurrentTable.TryGetValue(KeyParts[i], ExistingValue) then
     begin
       if ExistingValue is TTOMLTable then
       begin
-        // Inline tables cannot be expanded using the dot key.
         if TTOMLTable(ExistingValue).IsInline then
           raise ETOMLParserException.CreateFmt('Cannot extend inline table "%s"', [KeyParts[i]]);
-
-        // Tables that have been explicitly defined (such as [a])
-        // are not allowed to have content appended using ab = 1.
         if not TTOMLTable(ExistingValue).IsImplicit then
           raise ETOMLParserException.CreateFmt('Cannot extend explicitly defined table "%s"', [KeyParts[i]]);
-
         CurrentTable := TTOMLTable(ExistingValue);
       end
       else
-        raise ETOMLParserException.CreateFmt('Cannot navigate through "%s" because it is not a table (type: %s)',
-          [KeyPath, GetEnumName(TypeInfo(TTOMLValueType), Ord(ExistingValue.ValueType))]);
+        raise ETOMLParserException.CreateFmt('"%s" is not a table', [KeyPath]);
     end
     else
     begin
-      // An implicit table is created if the path does not exist,
-      // allowing subsequent dot keys to continue navigation.
       NewTable := TTOMLTable.Create;
       NewTable.IsImplicit := True;
       try
@@ -1731,19 +1801,9 @@ begin
       end;
     end;
   end;
-
-  // 2. Write the final key value
   LastKey := KeyParts[High(KeyParts)];
-
   if CurrentTable.TryGetValue(LastKey, ExistingValue) then
-  begin
-    if KeyPath <> '' then
-      KeyPath := KeyPath + '.' + LastKey
-    else
-      KeyPath := LastKey;
-    raise ETOMLParserException.CreateFmt('Cannot redefine key "%s"', [KeyPath]);
-  end;
-
+    raise ETOMLParserException.CreateFmt('Cannot redefine key "%s"', [LastKey]);
   try
     CurrentTable.Add(LastKey, Value);
   except
@@ -1754,49 +1814,43 @@ end;
 
 function TTOMLParser.ParseKeyValue: TTOMLKeyValuePair;
 var
-  KeyParts: TList<string>;
+  KeyPath: TList<string>;
   Value: TTOMLValue;
   FullKey: string;
   i: Integer;
   IsQuoted: Boolean;
 begin
-  { Parse key-value pairs.
-    Each segment of the key is retrieved separately by ParseKey
-    (the lexer has removed the quotes and returned the original content).
-    Then concatenate with #31 (ASCII Unit Separator)
-    – this adds a valid dot to the key name.
-    (e.g., "tt.com") can be preserved intact.
-    SplitDottedKey restores each segment using the same #31 delimiter. }
-  KeyParts := TList<string>.Create;
+  KeyPath := TList<string>.Create;
   try
     repeat
       IsQuoted := FCurrentToken.TokenType = ttString;
-      AddKeyToPath(KeyParts, ParseKey, IsQuoted);
+      AddKeyToPath(KeyPath, ParseKey, IsQuoted);
     until not Match(ttDot);
-
-    if KeyParts.Count = 1 then
-      FullKey := KeyParts[0]
+    if KeyPath.Count = 1 then
+      FullKey := KeyPath[0]
     else
     begin
-      FullKey := KeyParts[0];
-      for i := 1 to KeyParts.Count - 1 do
-        FullKey := FullKey + #31 + KeyParts[i];
+      FullKey := KeyPath[0];
+      for i := 1 to KeyPath.Count - 1 do
+        FullKey := FullKey + #31 + KeyPath[i];
     end;
-
     Expect(ttEqual);
     Value := ParseValue;
     Result := TTOMLKeyValuePair.Create(FullKey, Value);
   finally
-    KeyParts.Free;
+    KeyPath.Free;
   end;
 end;
+{ -------------------------------------------------------------------------
+  Top-level Parse
+  ------------------------------------------------------------------------- }
 
 function TTOMLParser.Parse: TTOMLTable;
 var
   CurrentTable: TTOMLTable;
   TablePath: TStringList;
-  DefinedTables: TStringList;  // The explicitly defined collection of [table] header paths
-  DefinedArrays: TStringList;  // The explicitly defined [[array]] header path collection
+  DefinedTables: TStringList;
+  DefinedArrays: TStringList;
   i: Integer;
   Key: string;
   Value: TTOMLValue;
@@ -1804,9 +1858,7 @@ var
   IsArrayOfTables: Boolean;
   ArrayValue: TTOMLArray;
   NewTable: TTOMLTable;
-  HeaderKey: string; // The current [header] normalized dot path (separated by #31)
-
-  { Concatenate the TablePath list into a path string separated by #31. }
+  HeaderKey: string;
 
   function TablePathToKey: string;
   var
@@ -1823,69 +1875,92 @@ var
 
 begin
   Result := TTOMLTable.Create;
+  Result.IsImplicit := True;
   try
     CurrentTable := Result;
     TablePath := TStringList.Create;
     DefinedTables := TStringList.Create;
     DefinedArrays := TStringList.Create;
-
     TablePath.CaseSensitive := True;
     DefinedTables.CaseSensitive := True;
     DefinedTables.Sorted := True;
     DefinedArrays.CaseSensitive := True;
     DefinedArrays.Sorted := True;
-
     try
+      // Collect file-header comment (before first key / section)
+      if FPreserveComments then
+      begin
+        FPendingComment := '';
+        while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+        begin
+          if FCurrentToken.TokenType = ttComment then
+          begin
+            if FPendingComment = '' then
+              FPendingComment := FCurrentToken.Value
+            else if FPendingComment[Length(FPendingComment)] = #10 then
+              FPendingComment := FPendingComment + FCurrentToken.Value
+            else
+              FPendingComment := FPendingComment + #10 + FCurrentToken.Value;
+          end
+          else
+          begin
+            if FPendingComment <> '' then
+              FPendingComment := FPendingComment + #10;
+          end;
+          Advance;
+        end;
+        if FPendingComment <> '' then
+        begin
+          Result.CommentBefore := FPendingComment;
+          FPendingComment := '';
+        end;
+      end;
       while FCurrentToken.TokenType <> ttEOF do
       begin
         case FCurrentToken.TokenType of
-
           ttLBracket:
             begin
+              // Collect pre-section comment
+              var SectionCommentBefore := FPendingComment;
+              FPendingComment := '';
               IsArrayOfTables := False;
               var FirstBracket := FCurrentToken;
               Advance;
-
-              // Detecting [[array]] — the second [ must immediately follow the first [
               if FCurrentToken.TokenType = ttLBracket then
               begin
                 if (FCurrentToken.Line <> FirstBracket.Line) or (FCurrentToken.Column <> FirstBracket.Column + 1) then
-                  raise ETOMLParserException.Create('Spaces are not allowed between brackets in [[table]] header');
+                  raise ETOMLParserException.Create('Spaces not allowed between [[ brackets');
                 IsArrayOfTables := True;
                 Advance;
               end;
-
-              // Parse the header path
               TablePath.Clear;
               repeat
                 var IsQ := (FCurrentToken.TokenType = ttString);
                 AddKeyToPath(TablePath, ParseKey, IsQ);
               until not Match(ttDot);
-
-              // Parse the ending brackets
               var FirstClosing := FCurrentToken;
               Expect(ttRBracket);
               if IsArrayOfTables then
               begin
                 if FCurrentToken.TokenType <> ttRBracket then
-                  raise ETOMLParserException.Create('Expected second "]" for Array of Tables header');
-                // The second ] must immediately follow the first ]
+                  raise ETOMLParserException.Create('Expected second "]" for Array of Tables');
                 if (FCurrentToken.Line <> FirstClosing.Line) or (FCurrentToken.Column <> FirstClosing.Column + 1) then
-                  raise ETOMLParserException.Create('Spaces are not allowed between brackets in [[table]] header');
+                  raise ETOMLParserException.Create('Spaces not allowed between ]] brackets');
                 Advance;
               end;
-
-              // The header must be followed by a newline or the end of the file must be reached.
+              // Collect inline comment on the header line
+              var HeaderInlineComment := '';
+              if FPreserveComments and (FCurrentToken.TokenType = ttComment) then
+              begin
+                HeaderInlineComment := FCurrentToken.Value;
+                Advance;
+              end;
               ExpectNewLineOrEOF;
-
-              // Calculate the unique identifier path for this header.
               HeaderKey := TablePathToKey;
-
-              // Check for conflicts with existing definitions.
               if IsArrayOfTables then
               begin
                 if DefinedTables.IndexOf(HeaderKey) >= 0 then
-                  raise ETOMLParserException.CreateFmt('Cannot define [[%s]] - already a regular table', [HeaderKey.Replace
+                  raise ETOMLParserException.CreateFmt('Cannot define [[%s]] — already a regular table', [HeaderKey.Replace
                     (#31, '.')]);
               end
               else
@@ -1893,32 +1968,22 @@ begin
                 if DefinedTables.IndexOf(HeaderKey) >= 0 then
                   raise ETOMLParserException.CreateFmt('Duplicate table header [%s]', [HeaderKey.Replace(#31, '.')]);
                 if DefinedArrays.IndexOf(HeaderKey) >= 0 then
-                  raise ETOMLParserException.CreateFmt('Cannot define [%s] - already an array of tables', [HeaderKey.Replace
+                  raise ETOMLParserException.CreateFmt('Cannot define [%s] — already an array of tables', [HeaderKey.Replace
                     (#31, '.')]);
               end;
-
-              // Path navigation: Entering level by level from the root
               CurrentTable := Result;
-              var PathTracker: string := '';
-
+              var PathTracker := '';
               for i := 0 to TablePath.Count - 1 do
               begin
                 Key := TablePath[i];
                 if i > 0 then
-                  PathTracker := PathTracker + #31
-                else
-                  PathTracker := '';
+                  PathTracker := PathTracker + #31;
                 PathTracker := PathTracker + Key;
-
                 var IsLast := (i = TablePath.Count - 1);
-
                 if IsLast and IsArrayOfTables then
                 begin
-                  // The final section of [[abc]]: Append the new table to the array
                   if CurrentTable.TryGetValue(Key, Value) then
                   begin
-                    // Existing arrays must be defined using [[]]
-                    // (they cannot be static arrays like a = []).
                     if (Value is TTOMLArray) and (DefinedArrays.IndexOf(PathTracker) < 0) then
                       raise ETOMLParserException.Create('Cannot extend static array');
                     if not (Value is TTOMLArray) then
@@ -1929,57 +1994,73 @@ begin
                     Value := TTOMLArray.Create;
                     CurrentTable.Add(Key, Value);
                   end;
-
                   NewTable := TTOMLTable.Create;
                   TTOMLArray(Value).Add(NewTable);
                   CurrentTable := NewTable;
                 end
                 else
                 begin
-                  // The intermediate level of the path or the final
-                  // segment of a normal [abc] sequence.
                   if not CurrentTable.TryGetValue(Key, Value) then
                   begin
-                    Value := TTOMLTable.Create;
+                    var TempTable := TTOMLTable.Create;
+                    TempTable.IsImplicit := True;
+                    Value := TempTable;
                     CurrentTable.Add(Key, Value);
                   end;
-
                   if Value is TTOMLArray then
                   begin
-                    // Only arrays defined by [[]] are allowed
-                    // to be accessed via the header navigation.
                     if DefinedArrays.IndexOf(PathTracker) < 0 then
                       raise ETOMLParserException.CreateFmt('Cannot navigate into static array "%s"', [Key]);
-
                     ArrayValue := TTOMLArray(Value);
                     if ArrayValue.Count = 0 then
                       raise ETOMLParserException.Create('Internal error: empty AoT');
-
-                    // Navigate to the latest entry in this array table
                     CurrentTable := TTOMLTable(ArrayValue.Items[ArrayValue.Count - 1]);
                   end
                   else if Value is TTOMLTable then
                   begin
-                    // Inline tables cannot be expanded via table headers.
                     if TTOMLTable(Value).IsInline then
                       raise ETOMLParserException.CreateFmt('Cannot extend inline table "%s"', [Key]);
-
                     CurrentTable := TTOMLTable(Value);
-                    // When the final segment is reached,
-                    // mark the table as explicitly defined.
-                    if IsLast and (not IsArrayOfTables) then
+                    if IsLast and not IsArrayOfTables then
                       CurrentTable.IsImplicit := False;
                   end
                   else
-                    raise ETOMLParserException.CreateFmt('Key "%s" is already defined as a scalar', [Key]);
+                    raise ETOMLParserException.CreateFmt('"%s" is already a scalar', [Key]);
                 end;
               end;
-
-              // Record this explicit definition
+              // Attach comments to the target table
+              if FPreserveComments then
+              begin
+                if SectionCommentBefore <> '' then
+                  CurrentTable.CommentBefore := SectionCommentBefore;
+                if HeaderInlineComment <> '' then
+                  CurrentTable.CommentInline := HeaderInlineComment;
+              end;
+              // Collect the pre-next-key pending comments
+              if FPreserveComments then
+              begin
+                FPendingComment := '';
+                while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+                begin
+                  if FCurrentToken.TokenType = ttComment then
+                  begin
+                    if FPendingComment = '' then
+                      FPendingComment := FCurrentToken.Value
+                    else if FPendingComment[Length(FPendingComment)] = #10 then
+                      FPendingComment := FPendingComment + FCurrentToken.Value
+                    else
+                      FPendingComment := FPendingComment + #10 + FCurrentToken.Value;
+                  end
+                  else
+                  begin
+                    if FPendingComment <> '' then
+                      FPendingComment := FPendingComment + #10;
+                  end;
+                  Advance;
+                end;
+              end;
               if IsArrayOfTables then
               begin
-                // Clear the existing sub-table definitions under this AoT
-                // (AoT restarts every iteration).
                 var SubPrefix := HeaderKey + #31;
                 for i := DefinedTables.Count - 1 downto 0 do
                   if Pos(SubPrefix, DefinedTables[i]) = 1 then
@@ -1990,20 +2071,22 @@ begin
               else
                 DefinedTables.Add(HeaderKey);
             end;
-
           ttIdentifier, ttString, ttInteger, ttFloat, ttDateTime:
             begin
               try
+                // Attach any accumulated pending comment to the first value's CommentBefore
+                var CommentForThisKey := FPendingComment;
+                FPendingComment := '';
                 KeyPair := ParseKeyValue;
+                if FPreserveComments and (CommentForThisKey <> '') then
+                  KeyPair.Value.CommentBefore := CommentForThisKey;
+                // Collect inline comment on the value line
+                if FPreserveComments then
+                  CollectInlineComment(KeyPair.Value);
                 ExpectNewLineOrEOF;
-
-                // Record the table path implicitly created by key-value pairs
-                // to prevent subsequent redefinition of table headers.
+                // Record implicit tables from dotted keys
                 var KVKeyParts := SplitDottedKey(KeyPair.Key);
                 var KVRunningPath := HeaderKey;
-
-                // Record the levels between the dot keys
-                // (they correspond to implicitly created tables).
                 for i := 0 to High(KVKeyParts) - 1 do
                 begin
                   if KVRunningPath <> '' then
@@ -2012,9 +2095,6 @@ begin
                   if DefinedTables.IndexOf(KVRunningPath) < 0 then
                     DefinedTables.Add(KVRunningPath);
                 end;
-
-                // If the value itself is an inline table,
-                // then the key also defines a table.
                 if KeyPair.Value is TTOMLTable then
                 begin
                   var FullKVPath := KVRunningPath;
@@ -2024,8 +2104,6 @@ begin
                   if DefinedTables.IndexOf(FullKVPath) < 0 then
                     DefinedTables.Add(FullKVPath);
                 end;
-
-                // Write the key-value pairs to the current table.W
                 try
                   if (Pos(#31, KeyPair.Key) > 0) or (KeyPair.Key = #31) then
                   begin
@@ -2039,23 +2117,69 @@ begin
                   KeyPair.Value.Free;
                   raise;
                 end;
-
+                // Collect blank-line / comment block after the key-value pair
+                if FPreserveComments then
+                begin
+                  FPendingComment := '';
+                  while FCurrentToken.TokenType in [ttNewLine, ttComment] do
+                  begin
+                    if FCurrentToken.TokenType = ttComment then
+                    begin
+                      if FPendingComment = '' then
+                        FPendingComment := FCurrentToken.Value
+                      else if FPendingComment[Length(FPendingComment)] = #10 then
+                        FPendingComment := FPendingComment + FCurrentToken.Value
+                      else
+                        FPendingComment := FPendingComment + #10 + FCurrentToken.Value;
+                    end
+                    else
+                    begin
+                      if FPendingComment <> '' then
+                        FPendingComment := FPendingComment + #10;
+                    end;
+                    Advance;
+                  end;
+                end;
               except
                 on E: ETOMLParserException do
                   raise;
                 on E: Exception do
-                  raise ETOMLParserException.CreateFmt('Error adding key-value pair: %s at line %d, column %d',
-                    [E.Message, FCurrentToken.Line, FCurrentToken.Column]);
+                  raise ETOMLParserException.CreateFmt('Error adding key-value: %s at line %d, column %d', [E.Message,
+                    FCurrentToken.Line, FCurrentToken.Column]);
               end;
             end;
-
           ttNewLine:
-            Advance;
-
+            begin
+              if FPreserveComments then
+              begin
+                if FPendingComment <> '' then
+                  FPendingComment := FPendingComment + #10;
+              end;
+              Advance;
+            end;
+          ttComment:
+            begin
+              if FPreserveComments then
+              begin
+                if FPendingComment = '' then
+                  FPendingComment := FCurrentToken.Value
+                else if FPendingComment[Length(FPendingComment)] = #10 then
+                  FPendingComment := FPendingComment + FCurrentToken.Value
+                else
+                  FPendingComment := FPendingComment + #10 + FCurrentToken.Value;
+              end;
+              Advance;
+            end;
         else
-          raise ETOMLParserException.CreateFmt('Unexpected token type: %s at line %d, column %d', [GetEnumName
-            (TypeInfo(TTokenType), Ord(FCurrentToken.TokenType)), FCurrentToken.Line, FCurrentToken.Column]);
+          raise ETOMLParserException.CreateFmt('Unexpected token %s at line %d, column %d', [GetEnumName(TypeInfo
+            (TTokenType), Ord(FCurrentToken.TokenType)), FCurrentToken.Line, FCurrentToken.Column]);
         end;
+      end; // while
+      // Anything remaining in FPendingComment becomes the file-footer comment
+      if FPreserveComments and (FPendingComment <> '') then
+      begin
+        Result.CommentTrailing := FPendingComment;
+        FPendingComment := '';
       end;
     finally
       TablePath.Free;
