@@ -29,7 +29,7 @@ All get-style read methods provide default value support, ensuring the program w
 #### GetStr - String Reading
 
 ```pascal
-function GetStr(const Key: string; const DefaultValue: string = ''): string;
+GetStr(const Key: string; const DefaultValue: string = ''): string;
 ```
 
 **Function:** Retrieve string value with dot-separated path support
@@ -49,7 +49,7 @@ site := Config.GetStr('"google.com"', 'unknown');
 #### GetInt - Integer Reading
 
 ```pascal
-function GetInt(const Key: string; const DefaultValue: Int64 = 0): Int64;
+GetInt(const Key: string; const DefaultValue: Int64 = 0): Int64;
 ```
 
 **Examples:**
@@ -61,7 +61,7 @@ timeout := Config.GetInt('timeout', 30);
 #### GetFloat - Float Reading
 
 ```pascal
-function GetFloat(const Key: string; const DefaultValue: Double = 0.0): Double;
+GetFloat(const Key: string; const DefaultValue: Double = 0.0): Double;
 ```
 
 **Examples:**
@@ -73,13 +73,13 @@ rate := Config.GetFloat('conversion.rate', 1.0);
 #### GetFloatValue - High-Precision Float Reading
 Preserves exact representation from TOML file, such as "3.14", "6.626e-34", "inf"
 ```pascal
-function GetFloatValue(const Key: string; const DefaultValue: String = ''): String;
+GetFloatValue(const Key: string; const DefaultValue: String = ''): String;
 ```
 
 #### GetBool - Boolean Reading
 
 ```pascal
-function GetBool(const Key: string; const DefaultValue: Boolean = False): Boolean;
+GetBool(const Key: string; const DefaultValue: Boolean = False): Boolean;
 ```
 
 **Examples:**
@@ -91,7 +91,7 @@ enabled := Config.GetBool('features.logging', True);
 #### GetDateTime - DateTime Reading
 
 ```pascal
-function GetDateTime(const Key: string; const DefaultValue: TDateTime = 0): TDateTime;
+GetDateTime(const Key: string; const DefaultValue: TDateTime = 0): TDateTime;
 ```
 
 **Examples:**
@@ -102,7 +102,7 @@ lastModified := Config.GetDateTime('metadata.modified', Now);
 #### GetDateTimeValue - High-Precision DateTime
 
 ```pascal
-function GetDateTimeValue(const Key: string; const DefaultValue: String = ''): String;
+GetDateTimeValue(const Key: string; const DefaultValue: String = ''): String;
 ```
 
 **Function:** Returns raw datetime string, preserving microsecond/nanosecond precision
@@ -128,7 +128,7 @@ All TryGet methods provide exception-safe access, indicating success or failure 
 #### TryGetStr - Safe String Reading
 
 ```pascal
-function TryGetStr(const Key: string; out Value: string): Boolean;
+TryGetStr(const Key: string; out Value: string): Boolean;
 ```
 
 **Examples:**
@@ -146,7 +146,7 @@ end;
 #### TryGetInt - Safe Integer Reading
 
 ```pascal
-function TryGetInt(const Key: string; out Value: Integer): Boolean;
+TryGetInt(const Key: string; out Value: Integer): Boolean;
 ```
 
 **Examples:**
@@ -187,7 +187,7 @@ All Set methods support overwrite control to prevent accidental overwriting of e
 #### SetStr - String Writing
 
 ```pascal
-function SetStr(const Key: string; const Value: string; 
+SetStr(const Key: string; const Value: string; 
                 Overwrite: Boolean = True): Boolean;
 ```
 
@@ -248,7 +248,7 @@ Put methods support method chaining, providing an elegant configuration building
 #### Put - Chained Setting
 
 ```pascal
-function Put(const Key: string; const Value: <Type>; 
+Put(const Key: string; const Value: <Type>; 
              Overwrite: Boolean = True): TTOMLTable;
 ```
 
@@ -355,7 +355,7 @@ LoadFromString(const ATOML: string; ClearExisting: Boolean = True;
 - `ATOML` - TOML string.
 - `ClearExisting` - Whether to clear existing content (default True)
 - `APreserveComments` - Whether to read annotations (default False)
-- 
+ 
 **Examples:**
 ```pascal
 var TOML := 'title = "MyApp"' + sLineBreak +
@@ -367,7 +367,7 @@ if Config.LoadFromString(TOML) then
 
 #### ToString - Serialize to String
 ```pascal
-function ToString(AWrapWidth: Integer; APreserveComments: Boolean = False): string;  
+ToString(AWrapWidth: Integer; APreserveComments: Boolean = False): string;  
 ```
 **parameter:**
 - `AWrapWidth` - The line break position when the string is too long. The default value is 0, meaning no line break.
@@ -427,7 +427,7 @@ LoadFromJSONFile(const FileName: string; ANullAsEmptyString: Boolean): Boolean;
 #### Remove - Delete Key
 
 ```pascal
-function Remove(const Key: string; FreeValue: Boolean = True): Boolean;
+Remove(const Key: string; FreeValue: Boolean = True): Boolean;
 ```
 
 **Parameters:**
@@ -461,7 +461,7 @@ Config.Clear(True);  // Clear and free all
 #### Count - Get Count
 
 ```pascal
-function Count: Integer;
+Count: Integer;
 ```
 
 **Examples:**
@@ -472,7 +472,7 @@ WriteLn('Total configuration items: ', Config.Count);
 #### HasKey - Check Key Existence
 
 ```pascal
-function HasKey(const Key: string): Boolean;
+HasKey(const Key: string): Boolean;
 ```
 
 **Examples:**
@@ -506,7 +506,7 @@ end;
 #### Clone - Deep Clone
 
 ```pascal
-function Clone: TTOMLTable;
+Clone: TTOMLTable;
 ```
 
 **Examples:**
