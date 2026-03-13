@@ -1,5 +1,5 @@
 🇺🇸 [English](README.md) | 🇨🇳 [简体中文](README_CN.md)
-# DelphiTOML  Version 2026.03.11
+# DelphiTOML  Version 2026.03.13
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Delphi](https://img.shields.io/badge/Delphi10.3%20and%20high-green.svg)](https://www.embarcadero.com/products/delphi/)
