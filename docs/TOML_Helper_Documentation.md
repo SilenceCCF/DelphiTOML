@@ -298,13 +298,14 @@ Config.Put('server', Server)
 #### LoadFromFile - Load from File
 
 ```pascal
-function LoadFromFile(const FileName: string; 
-                      ClearExisting: Boolean = True): Boolean;
+LoadFromFile(const FileName: string; ClearExisting: Boolean = True;
+             APreserveComments: Boolean = False): Boolean;
 ```
 
 **Parameters:**
 - `FileName` - File path
 - `ClearExisting` - Whether to clear existing content (default True)
+- `APreserveComments` - Whether to read annotations (default False)
 
 **Return Value:**
 - `True` - Load successful
@@ -326,8 +327,8 @@ end;
 #### SaveToFile - Save to File
 
 ```pascal
-function SaveToFile(const FileName: string; WriteBOM: Boolean = True;
-                    AWrapWidth: Integer): Boolean;
+SaveToFile(const FileName: string; WriteBOM: Boolean = True; AWrapWidth: Integer = 0;
+           APreserveComments: Boolean = False): Boolean;
 ```
 
 **Parameters:**
@@ -335,6 +336,7 @@ function SaveToFile(const FileName: string; WriteBOM: Boolean = True;
 - `WriteBOM` - Whether to write UTF-8 BOM (default True)
 - `AWrapWidth` - The line break position when the string is too long. The default value is 0, meaning no line break.
 - **Note: If the string value contains \n, it will be automatically split into a multi-line string.**
+- `APreserveComments` - Whether to write comments (default False)
 **Examples:**
 ```pascal
 if Config.SaveToFile('config.toml', True) then
@@ -346,10 +348,14 @@ else
 #### LoadFromString - Parse from String
 
 ```pascal
-function LoadFromString(const ATOML: string; 
-                        ClearExisting: Boolean = True): Boolean;
+LoadFromString(const ATOML: string; ClearExisting: Boolean = True;
+               APreserveComments: Boolean = False): Boolean;
 ```
-
+**parameter:**
+- `ATOML` - TOML string.
+- `ClearExisting` - Whether to clear existing content (default True)
+- `APreserveComments` - Whether to read annotations (default False)
+- 
 **Examples:**
 ```pascal
 var TOML := 'title = "MyApp"' + sLineBreak +
@@ -361,11 +367,12 @@ if Config.LoadFromString(TOML) then
 
 #### ToString - Serialize to String
 ```pascal
-function ToString(AWrapWidth: Integer): string;  
+function ToString(AWrapWidth: Integer; APreserveComments: Boolean = False): string;  
 ```
 **parameter:**
 - `AWrapWidth` - The line break position when the string is too long. The default value is 0, meaning no line break.
 - **Note: If the string value contains \n, it will be automatically split into a multi-line string.**
+- `APreserveComments` - Whether to write comments (default False)
 **Examples:**
 ```pascal
 var TOML := Config.ToString;
