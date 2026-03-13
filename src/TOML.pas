@@ -1,26 +1,14 @@
 { TOML.pas
-  This is the main unit of the TOML library that provides high-level functionality for working with TOML data.
-  It re-exports the main types and provides helper functions for parsing and serializing TOML data.
-  The unit follows the TOML v1.1.0 specification and provides a clean, type-safe interface for:
-  - Parsing TOML from strings and files
-  - Serializing TOML data structures to strings and files
-  - Creating and manipulating TOML data structures
-  - Type-safe access to TOML values
-  Example usage:
-    var
-      Table: TTOMLTable;
-    begin
-      // Parse TOML from string
-      Table := ParseTOML('key = "value"');
-      try
-        // Use the table...
-      finally
-        Table.Free;
-      end;
-    end;
+  Main unit for the TOML library.
+  Re-exports core types and provides high-level parse / serialize helpers.
+  Conforms to the TOML v1.1.0 specification.
+
+  Comment support (optional):
+    ParseTOML / ParseTOMLFromFile now accept an APreserveComments parameter.
+    SerializeTOML / SerializeTOMLToFile now accept an APreserveComments parameter.
+    When both are used round-trip comment fidelity is achieved.
 }
 unit TOML;
-//{$mode objfpc}{$H+}{$J-}
 
 interface
 
@@ -28,172 +16,146 @@ uses
   SysUtils, Classes, TOML.Types, TOML.Parser, TOML.Serializer;
 
 type
-  { Re-export main types for easier access }
-  TTOMLValue = TOML.Types.TTOMLValue;
-
-  TTOMLString = TOML.Types.TTOMLString;
-
-  TTOMLInteger = TOML.Types.TTOMLInteger;
-
-  TTOMLFloat = TOML.Types.TTOMLFloat;
-
-  TTOMLBoolean = TOML.Types.TTOMLBoolean;
-
+  { Re-export main types }
+  TTOMLValue    = TOML.Types.TTOMLValue;
+  TTOMLString   = TOML.Types.TTOMLString;
+  TTOMLInteger  = TOML.Types.TTOMLInteger;
+  TTOMLFloat    = TOML.Types.TTOMLFloat;
+  TTOMLBoolean  = TOML.Types.TTOMLBoolean;
   TTOMLDateTime = TOML.Types.TTOMLDateTime;
+  TTOMLArray    = TOML.Types.TTOMLArray;
+  TTOMLTable    = TOML.Types.TTOMLTable;
 
-  TTOMLArray = TOML.Types.TTOMLArray;
-
-  TTOMLTable = TOML.Types.TTOMLTable;
   { Re-export exception types }
-
-  ETOMLException = TOML.Types.ETOMLException;
-
-  ETOMLParserException = TOML.Types.ETOMLParserException;
-
+  ETOMLException           = TOML.Types.ETOMLException;
+  ETOMLParserException     = TOML.Types.ETOMLParserException;
   ETOMLSerializerException = TOML.Types.ETOMLSerializerException;
-{ Helper functions for creating TOML values }
 
-{ Creates a new TOML string value
-  @param AValue The string value to store
-  @returns A new TTOMLString instance that must be freed by the caller
-  @note The caller is responsible for freeing the returned instance }
+{ ---- Factory helpers ---- }
 
+{ Creates a new TOML string value. }
 function TOMLString(const AValue: string): TTOMLString;
-{ Creates a new TOML integer value
-  @param AValue The 64-bit integer value to store
-  @returns A new TTOMLInteger instance that must be freed by the caller
-  @note The caller is responsible for freeing the returned instance }
 
+{ Creates a new TOML integer value. }
 function TOMLInteger(const AValue: Int64): TTOMLInteger;
-{ Creates a new TOML float value
-  @param AValue The double-precision floating point value to store
-  @returns A new TTOMLFloat instance that must be freed by the caller
-  @note The caller is responsible for freeing the returned instance }
 
+{ Creates a new TOML float value. }
 function TOMLFloat(const AValue: Double): TTOMLFloat;
-{ Creates a new TOML boolean value
-  @param AValue The boolean value to store
-  @returns A new TTOMLBoolean instance that must be freed by the caller
-  @note The caller is responsible for freeing the returned instance }
 
+{ Creates a new TOML boolean value. }
 function TOMLBoolean(const AValue: Boolean): TTOMLBoolean;
-{ Creates a new TOML datetime value
-  @param AValue The TDateTime value to store
-  @returns A new TTOMLDateTime instance that must be freed by the caller
-  @note The caller is responsible for freeing the returned instance }
 
+{ Creates a new TOML datetime value. }
 function TOMLDateTime(const AValue: TDateTime): TTOMLDateTime;
-{ Creates a new empty TOML array
-  @returns A new empty TTOMLArray instance that must be freed by the caller
-  @note The caller is responsible for freeing the returned instance and any values added to it }
 
+{ Creates a new empty TOML array. }
 function TOMLArray: TTOMLArray;
-{ Creates a new empty TOML table
-  @returns A new empty TTOMLTable instance that must be freed by the caller
-  @note The caller is responsible for freeing the returned instance and any values added to it }
 
+{ Creates a new empty TOML table. }
 function TOMLTable: TTOMLTable;
-{ Parsing functions }
 
-{ Parses a TOML string into a table
-  @param ATOML The TOML-formatted string to parse
-  @returns A new TTOMLTable containing the parsed data
-  @raises ETOMLParserException if the input is invalid TOML
-  @note The caller is responsible for freeing the returned table and all its contents }
+{ ---- Parsing ---- }
 
-function ParseTOML(const ATOML: string): TTOMLTable;
-{ Parses a TOML file into a table
-  @param AFileName The path to the TOML file to parse
-  @returns A new TTOMLTable containing the parsed data
-  @raises ETOMLParserException if the input is invalid TOML
-  @raises EFileStreamError if the file cannot be opened or read
-  @note The caller is responsible for freeing the returned table and all its contents }
+{ Parses a TOML-formatted string into a TTOMLTable.
+  @param ATOML             The TOML text to parse.
+  @param APreserveComments When True, comments are read and stored on the
+                           resulting nodes (CommentBefore / CommentInline /
+                           CommentTrailing).  Default False.
+  @returns A new TTOMLTable.  Caller must free it.
+  @raises ETOMLParserException on invalid TOML input. }
+function ParseTOML(const ATOML: string;
+                   APreserveComments: Boolean = False): TTOMLTable;
 
-function ParseTOMLFromFile(const AFileName: string): TTOMLTable;
-{ Serialization functions }
+{ Parses a TOML file into a TTOMLTable.
+  @param AFileName         Path to the TOML file (UTF-8 or UTF-16 with BOM).
+  @param APreserveComments Preserve comments when True.
+  @returns A new TTOMLTable.  Caller must free it.
+  @raises ETOMLParserException on invalid TOML input.
+  @raises EFileStreamError if the file cannot be opened. }
+function ParseTOMLFromFile(const AFileName: string;
+                            APreserveComments: Boolean = False): TTOMLTable;
 
-{ Serializes a TOML value to a string
-  @param AValue The TOML value to serialize
-  @param AWrapWidth Maximum column width for wrapping long/multi-line strings.
-         Strings that contain newlines are written as TOML multi-line basic
-         strings ("""). Strings without newlines but longer than AWrapWidth are
-         wrapped with a line-ending backslash continuation. Pass 0 (default)
-         to keep the original single-line behaviour.
-  @returns A string containing the serialized TOML data
-  @raises ETOMLSerializerException if the value cannot be serialized }
+{ ---- Serialization ---- }
 
-function SerializeTOML(const AValue: TTOMLValue; AWrapWidth: Integer = 0): string;
-{ Serializes a TOML value to a file
-  @param AValue The TOML value to serialize
-  @param AFileName The path to the output file
-  @param BOM Whether to write a UTF-8 BOM (default True)
-  @param AWrapWidth Maximum column width for wrapping (0 = disabled, default)
-  @returns True if successful, False otherwise
-  @raises ETOMLSerializerException if the value cannot be serialized
-  @raises EFileStreamError if the file cannot be written }
+{ Serializes a TOML value to a string.
+  @param AValue            The value to serialize (usually a TTOMLTable).
+  @param AWrapWidth        Maximum column width for long-string wrapping.
+                           Strings with embedded newlines become multi-line
+                           basic strings (""").  0 = disabled (default).
+  @param APreserveComments When True, comment properties stored on each node
+                           are emitted in the output.  Default False.
+  @returns The serialized TOML text.
+  @raises ETOMLSerializerException if the value cannot be serialized. }
+function SerializeTOML(const AValue: TTOMLValue;
+                       AWrapWidth: Integer = 0;
+                       APreserveComments: Boolean = False): string;
 
-function SerializeTOMLToFile(const AValue: TTOMLValue; const AFileName: string; BOM: Boolean = True;
-  AWrapWidth: Integer = 0): Boolean;
+{ Serializes a TOML value to a file.
+  @param AValue            The value to serialize.
+  @param AFileName         Output file path.
+  @param BOM               Write a UTF-8 BOM (default True).
+  @param AWrapWidth        Max column width for wrapping (0 = disabled).
+  @param APreserveComments Emit comment nodes when True.
+  @returns True if successful, False on error. }
+function SerializeTOMLToFile(const AValue: TTOMLValue;
+                              const AFileName: string;
+                              BOM: Boolean = True;
+                              AWrapWidth: Integer = 0;
+                              APreserveComments: Boolean = False): Boolean;
 
 implementation
-{ Helper functions implementation }
+
+{ ---- Factory ---- }
 
 function TOMLString(const AValue: string): TTOMLString;
-begin
-  Result := TTOMLString.Create(AValue);
-end;
+begin Result := TTOMLString.Create(AValue); end;
 
 function TOMLInteger(const AValue: Int64): TTOMLInteger;
-begin
-  Result := TTOMLInteger.Create(AValue);
-end;
+begin Result := TTOMLInteger.Create(AValue); end;
 
 function TOMLFloat(const AValue: Double): TTOMLFloat;
-begin
-  Result := TTOMLFloat.Create(AValue);
-end;
+begin Result := TTOMLFloat.Create(AValue); end;
 
 function TOMLBoolean(const AValue: Boolean): TTOMLBoolean;
-begin
-  Result := TTOMLBoolean.Create(AValue);
-end;
+begin Result := TTOMLBoolean.Create(AValue); end;
 
 function TOMLDateTime(const AValue: TDateTime): TTOMLDateTime;
-begin
-  Result := TTOMLDateTime.Create(AValue);
-end;
+begin Result := TTOMLDateTime.Create(AValue); end;
 
 function TOMLArray: TTOMLArray;
-begin
-  Result := TTOMLArray.Create;
-end;
+begin Result := TTOMLArray.Create; end;
 
 function TOMLTable: TTOMLTable;
-begin
-  Result := TTOMLTable.Create;
-end;
-{ Parsing functions implementation }
+begin Result := TTOMLTable.Create; end;
 
-function ParseTOML(const ATOML: string): TTOMLTable;
-begin
-  Result := TOML.Parser.ParseTOMLString(ATOML);
-end;
+{ ---- Parsing ---- }
 
-function ParseTOMLFromFile(const AFileName: string): TTOMLTable;
+function ParseTOML(const ATOML: string; APreserveComments: Boolean): TTOMLTable;
 begin
-  Result := TOML.Parser.ParseTOMLFile(AFileName);
-end;
-{ Serialization functions implementation }
-
-function SerializeTOML(const AValue: TTOMLValue; AWrapWidth: Integer = 0): string;
-begin
-  Result := TOML.Serializer.SerializeTOML(AValue, AWrapWidth);
+  Result := TOML.Parser.ParseTOMLString(ATOML, APreserveComments);
 end;
 
-function SerializeTOMLToFile(const AValue: TTOMLValue; const AFileName: string; BOM: Boolean = True;
-  AWrapWidth: Integer = 0): Boolean;
+function ParseTOMLFromFile(const AFileName: string; APreserveComments: Boolean): TTOMLTable;
 begin
-  Result := TOML.Serializer.SerializeTOMLToFile(AValue, AFileName, BOM, AWrapWidth);
+  Result := TOML.Parser.ParseTOMLFile(AFileName, APreserveComments);
+end;
+
+{ ---- Serialization ---- }
+
+function SerializeTOML(const AValue: TTOMLValue;
+                       AWrapWidth: Integer;
+                       APreserveComments: Boolean): string;
+begin
+  Result := TOML.Serializer.SerializeTOML(AValue, AWrapWidth, APreserveComments);
+end;
+
+function SerializeTOMLToFile(const AValue: TTOMLValue;
+                              const AFileName: string;
+                              BOM: Boolean;
+                              AWrapWidth: Integer;
+                              APreserveComments: Boolean): Boolean;
+begin
+  Result := TOML.Serializer.SerializeTOMLToFile(AValue, AFileName, BOM, AWrapWidth, APreserveComments);
 end;
 
 end.
