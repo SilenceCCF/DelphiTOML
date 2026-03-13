@@ -29,7 +29,7 @@
 #### GetStr - 字符串读取
 
 ```pascal
-function GetStr(const Key: string; const DefaultValue: string = ''): string;
+GetStr(const Key: string; const DefaultValue: string = ''): string;
 ```
 
 **功能：** 获取字符串值，支持点分隔路径
@@ -49,7 +49,7 @@ site := Config.GetStr('"google.com"', 'unknown');
 #### GetInt - 整数读取
 
 ```pascal
-function GetInt(const Key: string; const DefaultValue: Int64 = 0): Int64;
+GetInt(const Key: string; const DefaultValue: Int64 = 0): Int64;
 ```
 
 **示例：**
@@ -61,7 +61,7 @@ timeout := Config.GetInt('timeout', 30);
 #### GetFloat - 浮点数读取
 
 ```pascal
-function GetFloat(const Key: string; const DefaultValue: Double = 0.0): Double;
+GetFloat(const Key: string; const DefaultValue: Double = 0.0): Double;
 ```
 
 **示例：**
@@ -72,13 +72,13 @@ rate := Config.GetFloat('conversion.rate', 1.0);
 #### GetFloatValue - 高精度浮点数读取
 保留 TOML 文件中的精确表示，如 "3.14"、"6.626e-34"、"inf"
 ```pascal
-function GetFloatValue(const Key: string; const DefaultValue: String = ''): String;
+GetFloatValue(const Key: string; const DefaultValue: String = ''): String;
 ```
 
 #### GetBool - 布尔值读取
 
 ```pascal
-function GetBool(const Key: string; const DefaultValue: Boolean = False): Boolean;
+GetBool(const Key: string; const DefaultValue: Boolean = False): Boolean;
 ```
 
 **示例：**
@@ -90,7 +90,7 @@ enabled := Config.GetBool('features.logging', True);
 #### GetDateTime - 日期时间读取
 
 ```pascal
-function GetDateTime(const Key: string; const DefaultValue: TDateTime = 0): TDateTime;
+GetDateTime(const Key: string; const DefaultValue: TDateTime = 0): TDateTime;
 ```
 
 **示例：**
@@ -101,7 +101,7 @@ lastModified := Config.GetDateTime('metadata.modified', Now);
 #### GetDateTimeValue - 高精度日期时间
 
 ```pascal
-function GetDateTimeValue(const Key: string; const DefaultValue: String = ''): String;
+GetDateTimeValue(const Key: string; const DefaultValue: String = ''): String;
 ```
 
 **功能：** 返回原始日期时间字符串，保留微秒/纳秒精度
@@ -127,7 +127,7 @@ timestamp := Config.GetDateTimeValue('created_at', '');
 #### TryGetStr - 安全字符串读取
 
 ```pascal
-function TryGetStr(const Key: string; out Value: string): Boolean;
+TryGetStr(const Key: string; out Value: string): Boolean;
 ```
 
 **示例：**
@@ -145,7 +145,7 @@ end;
 #### TryGetInt - 安全整数读取
 
 ```pascal
-function TryGetInt(const Key: string; out Value: Integer): Boolean;
+TryGetInt(const Key: string; out Value: Integer): Boolean;
 ```
 
 **示例：**
@@ -186,7 +186,7 @@ end;
 #### SetStr - 字符串写入
 
 ```pascal
-function SetStr(const Key: string; const Value: string; 
+SetStr(const Key: string; const Value: string; 
                 Overwrite: Boolean = True): Boolean;
 ```
 
@@ -247,7 +247,7 @@ Put 方法支持链式调用，提供简洁优雅的配置构建方式。
 #### Put - 链式设置
 
 ```pascal
-function Put(const Key: string; const Value: <Type>; 
+Put(const Key: string; const Value: <Type>; 
              Overwrite: Boolean = True): TTOMLTable;
 ```
 
@@ -298,13 +298,14 @@ Config.Put('server', Server)
 
 ```pascal
 LoadFromFile(const FileName: string; ClearExisting: Boolean = True;
-             APreserveComments: Boolean = False): Boolean;
+                      APreserveComments: Boolean = False): Boolean;
 ```
 
 **参数：**
 - `FileName` - 文件路径
 - `ClearExisting`     - 是否清空现有内容（默认 True）
 - `APreserveComments` - 是否读取注释（默认 False）
+
 **返回值：**
 - `True` - 加载成功
 - `False` - 加载失败
@@ -326,15 +327,16 @@ end;
 
 ```pascal
 SaveToFile(const FileName: string; WriteBOM: Boolean = True; AWrapWidth: Integer = 0;
-           APreserveComments: Boolean = False): Boolean;
+                    APreserveComments: Boolean = False): Boolean;
 ```
 
 **参数：**
 - `FileName` - 文件路径
 - `WriteBOM` - 是否写入 UTF-8 BOM（默认 True）。
 - `AWrapWidth` - 字符串超长时的换行位置，默认为 0 不换行。
-- `APreserveComments` - 是否写入注释（默认 False）。
 - **注意：如果字符串值中含有 \n，则自动拆成多行字符串。**
+- `APreserveComments` - 是否写入注释（默认 False）。
+
 **示例：**
 ```pascal
 if Config.SaveToFile('config.toml', True, 80) then
@@ -346,10 +348,14 @@ else
 #### LoadFromString - 从字符串解析
 
 ```pascal
-function LoadFromString(const ATOML: string; 
-                        ClearExisting: Boolean = True): Boolean;
+LoadFromString(const ATOML: string; ClearExisting: Boolean = True;
+                        APreserveComments: Boolean = False): Boolean;
 ```
-
+**parameter:**
+- `ATOML` - TOML string.
+- `ClearExisting`     - 是否清空现有内容（默认 True）
+- `APreserveComments` - 是否读取注释（默认 False）
+ 
 **示例：**
 ```pascal
 var TOML := 'title = "MyApp"' + sLineBreak +
@@ -361,11 +367,11 @@ if Config.LoadFromString(TOML) then
 
 #### ToString - 序列化为字符串
 ```pascal
-function ToString(AWrapWidth: Integer): string; 
+ToString(AWrapWidth: Integer; APreserveComments: Boolean = False): string; 
 ```
 **参数：**
 - `AWrapWidth` - 字符串超长时的换行位置，默认为 0 不换行。
-- 
+- `APreserveComments` - 是否写入注释（默认 False）。
 **示例：**
 ```pascal
 var TOML := Config.ToString(120);
@@ -416,7 +422,7 @@ LoadFromJSONFile(const FileName: string; ANullAsEmptyString: Boolean): Boolean;
 #### Remove - 删除键
 
 ```pascal
-function Remove(const Key: string; FreeValue: Boolean = True): Boolean;
+Remove(const Key: string; FreeValue: Boolean = True): Boolean;
 ```
 
 **参数：**
@@ -555,7 +561,7 @@ showmessage(str);
 #### RemoveAt - 删除数组成员
 
 ```pascal
-function RemoveAt(Index: Integer; FreeItem: Boolean = True): Boolean;
+RemoveAt(Index: Integer; FreeItem: Boolean = True): Boolean;
 ```
 
 **示例：**
@@ -569,7 +575,7 @@ if Arr.RemoveAt(2, True) then
 ### 8. 其它
 #### ToString - 序列化为字符串
 ```pascal
-function ToString: string; 
+ToString: string; 
 ```
 #### clone - 克隆表
 ```pascal
