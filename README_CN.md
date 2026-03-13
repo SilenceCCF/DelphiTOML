@@ -1,5 +1,5 @@
 🇺🇸 [English](README.md) | 🇨🇳 [简体中文](README_CN.md)
-# DelphiTOML Version 2026.03.11
+# DelphiTOML Version 2026.03.13
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Delphi](https://img.shields.io/badge/Delphi10.3%20and%20high-green.svg)](https://www.embarcadero.com/products/delphi/)
@@ -11,8 +11,9 @@
 2. 增加 TOML.Helper.pas 单元，新增大量函数和方法，简化读写操作。使用方法参见[文档](docs/TOML_Helper_Documentation_CN.md)。
 3. 增加 TOML.JSON.pas 单元，支持 TOML 和 JSON 格式的相互转换。
 4. 浮点数和日期类型数据支持以原始精度格式输出：RawString。
-5. 稍做修改也可以支持更低版本的 delphi 和 Free Pascal。
-6. 测试单元用法，编译 tomldecoder 和 TOMLEncoder 单元为 exe 文件，下载[官方测试程序](https://github.com/toml-lang/toml-test/releases)后运行：
+5. 支持读写注释（这应该是为数不多的可以读写注释的组件）。
+6. 稍做修改也可以支持更低版本的 delphi 和 Free Pascal。
+7. 测试单元用法，编译 tomldecoder 和 TOMLEncoder 单元为 exe 文件，下载[官方测试程序](https://github.com/toml-lang/toml-test/releases)后运行：
 ```
 # 必须包含路径
 toml-test.exe  test -decoder .\tomldecoder.exe -encoder .\TOMLEncoder.exe -toml 1.1.0 -v > results.txt
@@ -33,13 +34,15 @@ invalid tests: 466 passed,  0 failed
    或：
 ```pascal    
    Config := NewTable;
-   Config.LoadFromFile('config.toml');
+   // 从文件读取数据，包括注释，并覆盖当前数据
+   Config.LoadFromFile('config.toml', True, True);
 ```
    或：
 ```pascal    
    Config :=TTOMLTable.Create;
    Config.LoadFromFile('config.toml');
 ```
+
    读取：
 ```pascal   
    width := Config.GetInt('width', 800);
@@ -98,7 +101,7 @@ invalid tests: 466 passed,  0 failed
    保存文件：
 ```pascal   
    Config.SaveToFile('config.toml');
-   Config.SaveToFile('config.toml',80); //字符串值按80列换行
+   Config.SaveToFile('config.toml', 80, true); //字符串等过长数据按80列换行，同时写入注释
 ```
    创建表数组：
 ```pascal   
@@ -131,6 +134,10 @@ invalid tests: 466 passed,  0 failed
         showmessage(param.GetStr('name'));
       end;    
    parameters.ForEachTable(ProcessParameter);  // 调用
+```
+   读取注释:
+```pascal
+
 ```
 
 ----
