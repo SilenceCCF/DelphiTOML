@@ -1,6 +1,20 @@
 (* TOML.Parser.pas
-   TOML parser (lexical analysis + syntax analysis).
-   Conforms to the TOML v1.1.0 specification.
+TOML parser unit (lexical analysis + syntax analysis).
+This unit implements a complete parser conforming to the TOML v1.1.0 specification, using a two-stage design:
+1. TTOMLLexer — Lexical analysis that converts raw text into a sequence of tokens.
+2. TTOMLParser — Syntax analysis, converting token sequences into TOML data structures.
+Supported features:
+- Key-value pairs (bare keys, basic string keys, literal string keys, dot keys)
+- Tables and arrays
+- Inline table { key = value, ... }
+- Array [...] (supports trailing commas and multi-line formatting)
+- Basic strings and literal strings (including multi-line forms)
+- Decimal, hexadecimal (0x), octal (0o), binary (0b) integers
+- Floating-point numbers (including exponents, inf, nan)
+- Boolean value (true / false)
+- Date and time (with time zone offset, local date and time, local date, local time)
+Unlike tables explicitly defined in [header]
+- Use the IsInline flag for inline tables to prevent subsequent expansion of their content via the table header.
    Comment-aware parsing (optional):
      When APreserveComments = True is passed to TTOMLParser.Create / ParseTOML*,
      the parser collects comments and attaches them to the nearest TOML value:
@@ -13,9 +27,12 @@
      For the root table:
        CommentBefore   = file-header comment (everything before the first key/section).
        CommentTrailing = file-footer comment (everything after the last key/section).
-   Key ordering:
-     Uses TTOMLOrderedTable so that key insertion order is preserved.
+Key implementation details:
+- The segments in the period key are concatenated using #31 (ASCII Unit Separator).
+Avoid confusion with valid dot characters in key names (such as "tt.com").
+- An intermediate table implicitly created using the IsImplicit flag.
 *)
+
 unit TOML.Parser;
 
 interface
