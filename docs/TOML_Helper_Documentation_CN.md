@@ -294,6 +294,16 @@ Config.Put('server', Server)
 
 ### 5. 文件和字符串操作
 
+#### CreateFromFile - 从文件创建
+
+```pascal
+CreateFromFile(const FileName: string; APreserveComments: Boolean = False): TTOMLTable;
+```
+
+**参数：**
+- `FileName` - 文件路径
+- `APreserveComments` - 是否读取注释（默认 False）
+
 #### LoadFromFile - 从文件加载
 
 ```pascal
@@ -651,6 +661,7 @@ var
 begin
   // 创建配置
   Config := TTOMLTable.Create;
+  // 或 Config := Newtable;
   try
     // 使用构建器模式设置配置
     Config.Put('app_name', 'MyApplication')
