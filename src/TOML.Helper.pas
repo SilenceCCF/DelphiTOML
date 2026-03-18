@@ -2,23 +2,21 @@
 TOML auxiliary extension units, through class helpers,
 provide TTOMLLTable and TTOMLArray with...
 Provides a simpler and more secure read/write API.
-
 Main functions:
 - TTOMLTableHelper: Reading (GetXxx / TryGetXxx) and writing (SetXxx) tables.
   Chained calls (Put), file operations (LoadFromFile / SaveToFile),
   Key management (HasKey / GetKeys / Remove / Clear / Clone / Count),
-  File and String Operations (ToString / SaveToFile / LoadFromFile / CreateFromFile),
+  File and String Operations (ToString / SaveToFile / LoadFromFile /
+                              CreateFromFile / CreateFromString),
   About JSON (ToJSON / SaveToJSONFile / LoadFromJson / LoadFromJsonFile)
-- TTOMLArrayHelper: Reads array elements (GetXxx / TryGetXxx) and appends/insert/writing
-  them (AddXxx / InsertXxx / SetXxx).
+- TTOMLArrayHelper: Reads array elements (GetXxx / TryGetXxx) and
+  appends/insert/writing them (AddXxx / InsertXxx / SetXxx).
 Traversal (ForEachTable), removal (RemoveAt / Clear), etc.
-
 Global factory function:
 - NewTable / NewArray: Create an empty object
 - LoadTOML: Loads from a file; returns nil on error.
 - ParseTOML: Parses a string, returns nil on error.
 - TryParseTOML: Parses a string and returns a Boolean result.
-
 Path navigation (internal helper function):
 - SplitPath: Splits paths enclosed in quotes and periods
   (supports "a".bc".d format)
@@ -27,6 +25,7 @@ Path navigation (internal helper function):
 - SetValueAtPath: Writes a value along the path
   (intermediate levels that do not exist will be created automatically).
 }
+
 unit TOML.Helper;
 
 interface
@@ -97,9 +96,10 @@ type
     function Put(const Key: string; Value: TTOMLTable; Overwrite: Boolean = True): TTOMLTable; overload;
 
     { ----- File / string I/O ----- }
-    function CreateFromFile(const FileName: string; APreserveComments: Boolean = False): TTOMLTable;
+    class function CreateFromFile(const FileName: string; APreserveComments: Boolean = False): TTOMLTable;
     function LoadFromFile(const FileName: string; ClearExisting: Boolean = True; APreserveComments: Boolean =
       False): Boolean;
+    class function CreateFromString(const ATOML: string; APreserveComments: Boolean = False): TTOMLTable;
     function LoadFromString(const ATOML: string; ClearExisting: Boolean = True; APreserveComments: Boolean =
       False): Boolean;
     function SaveToFile(const FileName: string; WriteBOM: Boolean = True; AWrapWidth: Integer = 0;
@@ -960,9 +960,13 @@ end;
   TTOMLTableHelper — File / string I/O
   ========================================================================= }
 
-function TTOMLTableHelper.CreateFromFile(const FileName: string; APreserveComments: Boolean): TTOMLTable;
+class function TTOMLTableHelper.CreateFromFile(const FileName: string; APreserveComments: Boolean): TTOMLTable;
 begin
-  Result := TOML.Parser.ParseTOMLFile(FileName, APreserveComments);
+  try
+    Result := TOML.Parser.ParseTOMLFile(FileName, APreserveComments);
+  except
+    Result := nil;
+  end;
 end;
 
 function TTOMLTableHelper.LoadFromFile(const FileName: string; ClearExisting, APreserveComments: Boolean): Boolean;
@@ -987,6 +991,15 @@ begin
     end;
   except
     Result := False;
+  end;
+end;
+
+class function TTOMLTableHelper.CreateFromString(const ATOML: string; APreserveComments: Boolean = False): TTOMLTable;
+begin
+  try
+    Result := TOML.Parser.ParseTOMLString(ATOML, APreserveComments);
+  except
+    Result := nil;
   end;
 end;
 
