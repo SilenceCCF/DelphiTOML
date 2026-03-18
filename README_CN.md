@@ -31,6 +31,10 @@ invalid tests: 466 passed,  0 failed
 ```pascal
    Config := LoadToml('config.toml');
 ```
+  或：
+```pascal
+  Config := TTOMLTable.CreateFromFile('config.toml');
+```
    或：
 ```pascal    
    Config := NewTable;
