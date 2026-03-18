@@ -152,9 +152,10 @@ begin
   Parser := TTOMLParser.Create(ATOML, APreserveComments);
   try
     Result := Parser.Parse;
-  finally
-    Parser.Free;
+  except
+    Result := nil;
   end;
+  Parser.Free;
 end;
 
 function ParseTOMLFile(const AFileName: string; APreserveComments: Boolean): TTOMLTable;
@@ -181,12 +182,14 @@ begin
     try
       SL.LoadFromStream(Stream, Encoding);
       Result := ParseTOMLString(SL.Text, APreserveComments);
-    finally
-      SL.Free;
+    except
+      Result := nil;
     end;
-  finally
-    Stream.Free;
+    SL.Free;
+  except
+    Result := nil;
   end;
+  Stream.Free;
 end;
 { =========================================================================
   TTOMLLexer
