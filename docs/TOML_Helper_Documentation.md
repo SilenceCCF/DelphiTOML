@@ -295,7 +295,17 @@ Config.Put('server', Server)
 
 ### 5. File and String Operations
 
-#### LoadFromFile - Load from File
+#### CreateFromFile - Create from file
+
+```pascal
+CreateFromFile(const FileName: string; APreserveComments: Boolean = False): TTOMLTable;
+```
+
+**Parameters:**
+- `FileName` - File path
+- `APreserveComments` - Whether to read annotations (default False)
+
+#### LoadFromFile - Load from file
 
 ```pascal
 LoadFromFile(const FileName: string; ClearExisting: Boolean = True;
@@ -324,7 +334,7 @@ finally
 end;
 ```
 
-#### SaveToFile - Save to File
+#### SaveToFile - Save to file
 
 ```pascal
 SaveToFile(const FileName: string; WriteBOM: Boolean = True; AWrapWidth: Integer = 0;
@@ -708,6 +718,7 @@ var
 begin
   // Create configuration
   Config := TTOMLTable.Create;
+  // or: Config := Newtable;
   try
     // Use builder pattern to set configuration
     Config.Put('app_name', 'MyApplication')
